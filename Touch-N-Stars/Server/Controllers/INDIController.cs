@@ -5,10 +5,6 @@ using EmbedIO.WebApi;
 using NINA.Core.Utility;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Xml;
-using System.Xml.Linq;
 
 namespace TouchNStars.Server.Controllers;
 
@@ -17,8 +13,6 @@ namespace TouchNStars.Server.Controllers;
 /// </summary>
 public class INDIController : WebApiController
 {
-    private static readonly string INDIDriversPath = "/usr/share/indi/drivers.xml";
-
     /// <summary>
     /// GET /api/indi/focuser - Get available INDI focuser drivers
     /// </summary>
@@ -83,135 +77,23 @@ public class INDIController : WebApiController
     }
 
     /// <summary>
-    /// Helper method to get drivers by type
+    /// Helper method to get drivers by type using hardcoded driver lists
     /// </summary>
     private ApiResponse GetDriversByType(string driverType)
     {
         try
         {
-            if (!File.Exists(INDIDriversPath))
+            var drivers = driverType switch
             {
-                // Return empty list on Windows or systems without INDI
-                HttpContext.Response.StatusCode = 200;
-                return new ApiResponse
-                {
-                    Success = true,
-                    Response = new List<INDIDriver>(),
-                    StatusCode = 200,
-                    Type = "INDIDrivers"
-                };
-            }
-
-            var doc = XDocument.Load(INDIDriversPath);
-            var root = doc.Root;
-
-            var drivers = new List<INDIDriver>();
-
-            if (root != null)
-            {
-                // Special handling for flatpanel - filter from Auxiliary group
-                if (driverType == "flatpanel")
-                {
-                    var auxiliaryGroup = root.Elements("devGroup")
-                        .FirstOrDefault(g => g.Attribute("group")?.Value == "Auxiliary");
-
-                    if (auxiliaryGroup != null)
-                    {
-                        foreach (var deviceElement in auxiliaryGroup.Elements("device"))
-                        {
-                            var label = deviceElement.Attribute("label")?.Value ?? "";
-
-                            // Include devices with "flat", "panel", "cover", "FP", or "GIOTTO" in the label (case-insensitive)
-                            if (label.Contains("flat", StringComparison.OrdinalIgnoreCase) ||
-                                label.Contains("panel", StringComparison.OrdinalIgnoreCase) ||
-                                label.Contains("cover", StringComparison.OrdinalIgnoreCase) ||
-                                label.Contains("FP", StringComparison.OrdinalIgnoreCase) ||
-                                label.Contains("GIOTTO", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var driverElement = deviceElement.Element("driver");
-                                if (driverElement != null)
-                                {
-                                    var name = driverElement.Attribute("name")?.Value;
-                                    var executableName = driverElement.Value;
-
-                                    if (!string.IsNullOrWhiteSpace(name))
-                                    {
-                                        var indiDriver = new INDIDriver
-                                        {
-                                            Name = executableName ?? name,
-                                            Label = label,
-                                            Type = driverType
-                                        };
-                                        drivers.Add(indiDriver);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    HttpContext.Response.StatusCode = 200;
-                    return new ApiResponse
-                    {
-                        Success = true,
-                        Response = drivers,
-                        StatusCode = 200,
-                        Type = "INDIDrivers"
-                    };
-                }
-
-                // Map driver types to devGroup names in INDI's drivers.xml
-                string devGroupName = driverType switch
-                {
-                    "focuser" => "Focusers",
-                    "filterwheel" => "Filter Wheels",
-                    "rotator" => "Rotators",
-                    "telescope" => "Telescopes",
-                    "weather" => "Weather",
-                    "switches" => "Power",
-                    _ => ""
-                };
-
-                if (string.IsNullOrEmpty(devGroupName))
-                {
-                    HttpContext.Response.StatusCode = 200;
-                    return new ApiResponse
-                    {
-                        Success = true,
-                        Response = drivers,
-                        StatusCode = 200,
-                        Type = "INDIDrivers"
-                    };
-                }
-
-                var devGroup = root.Elements("devGroup")
-                    .FirstOrDefault(g => g.Attribute("group")?.Value == devGroupName);
-
-                if (devGroup != null)
-                {
-                    foreach (var deviceElement in devGroup.Elements("device"))
-                    {
-                        var label = deviceElement.Attribute("label")?.Value;
-                        var driverElement = deviceElement.Element("driver");
-
-                        if (driverElement != null)
-                        {
-                            var name = driverElement.Attribute("name")?.Value;
-                            var executableName = driverElement.Value; // The driver executable name is the text content
-
-                            if (!string.IsNullOrWhiteSpace(name))
-                            {
-                                var indiDriver = new INDIDriver
-                                {
-                                    Name = executableName ?? name,
-                                    Label = label ?? name,
-                                    Type = driverType
-                                };
-                                drivers.Add(indiDriver);
-                            }
-                        }
-                    }
-                }
-            }
+                "focuser" => INDIFocusDrivers.Drivers,
+                "filterwheel" => INDIFilterWheelDrivers.Drivers,
+                "rotator" => INDIRotatorDrivers.Drivers,
+                "telescope" => INDIMountDrivers.Drivers,
+                "weather" => INDIWeatherDrivers.Drivers,
+                "switches" => INDISwitchDrivers.Drivers,
+                "flatpanel" => INDIFlatPanelDrivers.Drivers,
+                _ => new List<INDIDriver>()
+            };
 
             HttpContext.Response.StatusCode = 200;
             return new ApiResponse
@@ -220,18 +102,6 @@ public class INDIController : WebApiController
                 Response = drivers,
                 StatusCode = 200,
                 Type = "INDIDrivers"
-            };
-        }
-        catch (XmlException ex)
-        {
-            Logger.Warning($"Failed to parse INDI drivers file: {ex.Message}");
-            HttpContext.Response.StatusCode = 400;
-            return new ApiResponse
-            {
-                Success = false,
-                Error = $"Failed to parse INDI drivers file: {ex.Message}",
-                StatusCode = 400,
-                Type = "Error"
             };
         }
         catch (Exception ex)
