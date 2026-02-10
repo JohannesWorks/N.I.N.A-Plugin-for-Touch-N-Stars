@@ -6,9 +6,9 @@ namespace TouchNStars.Server.Models {
     public class StarDetectionOptionsDto {
         public bool UseAdvanced { get; set; }
         public bool ModelPSF { get; set; }
-        public string SimpleNoiseLevel { get; set; }
-        public string SimplePixelScale { get; set; }
-        public string SimpleFocusRange { get; set; }
+        public string Simple_NoiseLevel { get; set; }
+        public string Simple_PixelScale { get; set; }
+        public string Simple_FocusRange { get; set; }
         public bool HotpixelFiltering { get; set; }
         public bool HotpixelThresholdingEnabled { get; set; }
         public bool UseAutoFocusCrop { get; set; }

@@ -942,6 +942,55 @@ public class HocusFocusController : WebApiController
 
             executeMethod.Invoke(command, new object[] { null });
 
+            // Explicitly clear tilt measurement history after clearing analyses
+            try
+            {
+                var tiltModelProperty = inspectorVMType.GetProperty("TiltModel");
+                if (tiltModelProperty != null)
+                {
+                    var tiltModel = tiltModelProperty.GetValue(inspectorVM);
+                    if (tiltModel != null)
+                    {
+                        var tiltModelType = tiltModel.GetType();
+                        var historyProperty = tiltModelType.GetProperty("SensorTiltHistoryModels");
+                        if (historyProperty != null)
+                        {
+                            var historyModels = historyProperty.GetValue(tiltModel);
+                            if (historyModels != null)
+                            {
+                                var clearMethod = historyModels.GetType().GetMethod("Clear");
+                                if (clearMethod != null)
+                                {
+                                    clearMethod.Invoke(historyModels, null);
+                                    Logger.Debug("[ClearDetailedAutoFocus] Tilt measurement history cleared");
+                                }
+                            }
+                        }
+                        
+                        // Reset the nextHistoryId counter so history IDs start from 1 again
+                        try
+                        {
+                            var nextHistoryIdField = tiltModelType.GetField("nextHistoryId", 
+                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            if (nextHistoryIdField != null)
+                            {
+                                nextHistoryIdField.SetValue(tiltModel, 0);
+                                Logger.Debug("[ClearDetailedAutoFocus] Tilt history ID counter reset to 0");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"[ClearDetailedAutoFocus] Could not reset nextHistoryId: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[ClearDetailedAutoFocus] Could not clear tilt history explicitly: {ex.Message}");
+                // Don't fail the clear operation if we can't clear history explicitly
+            }
+
             return new Dictionary<string, object>()
             {
                 { "Success", true },
@@ -1777,87 +1826,6 @@ public class HocusFocusController : WebApiController
         }
     }
 
-    [Route(HttpVerbs.Get, "/hocusfocus/star-annotator/options")]
-    public async Task<StarAnnotatorOptionsDto> GetStarAnnotatorOptions()
-    {
-        try
-        {
-            var options = StarAnnotatorOptionsService.GetOptions();
-            return options;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Error getting StarAnnotatorOptions", ex);
-            HttpContext.Response.StatusCode = 500;
-            throw;
-        }
-    }
-
-    [Route(HttpVerbs.Post, "/hocusfocus/star-annotator/options")]
-    public async Task<object> SetStarAnnotatorOptions()
-    {
-        try
-        {
-            StarAnnotatorOptionsDto dto = null;
-            using (var reader = new System.IO.StreamReader(HttpContext.Request.InputStream))
-            {
-                var jsonStr = await reader.ReadToEndAsync();
-                if (!string.IsNullOrEmpty(jsonStr))
-                {
-                    var jsonOptions = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    dto = System.Text.Json.JsonSerializer.Deserialize<StarAnnotatorOptionsDto>(jsonStr, jsonOptions);
-                }
-            }
-
-            if (dto == null)
-            {
-                HttpContext.Response.StatusCode = 400;
-                return new { error = "Request body cannot be null" };
-            }
-
-            var success = StarAnnotatorOptionsService.SetOptions(dto);
-            if (success)
-            {
-                return new { message = "StarAnnotatorOptions updated successfully" };
-            }
-            else
-            {
-                HttpContext.Response.StatusCode = 500;
-                return new { error = "Failed to update StarAnnotatorOptions" };
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Error setting StarAnnotatorOptions", ex);
-            HttpContext.Response.StatusCode = 500;
-            return new { error = ex.Message };
-        }
-    }
-
-    [Route(HttpVerbs.Post, "/hocusfocus/star-annotator/reset-defaults")]
-    public async Task<object> ResetStarAnnotatorDefaults()
-    {
-        try
-        {
-            var success = StarAnnotatorOptionsService.ResetToDefaults();
-            if (success)
-            {
-                return new { message = "StarAnnotatorOptions reset to defaults successfully" };
-            }
-            else
-            {
-                HttpContext.Response.StatusCode = 500;
-                return new { error = "Failed to reset StarAnnotatorOptions to defaults" };
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Error resetting StarAnnotatorOptions to defaults", ex);
-            HttpContext.Response.StatusCode = 500;
-            return new { error = ex.Message };
-        }
-    }
-
     [Route(HttpVerbs.Get, "/hocusfocus/star-detection/options")]
     public async Task<object> GetStarDetectionOptions()
     {
@@ -1882,66 +1850,557 @@ public class HocusFocusController : WebApiController
         }
     }
 
-    [Route(HttpVerbs.Post, "/hocusfocus/star-detection/options")]
-    public async Task<object> SetStarDetectionOptions()
-    {
-        try
-        {
-            var jsonOptions = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            StarDetectionOptionsDto dto;
-
-            using (var reader = new System.IO.StreamReader(HttpContext.Request.InputStream))
-            {
-                var jsonStr = await reader.ReadToEndAsync();
-                dto = System.Text.Json.JsonSerializer.Deserialize<StarDetectionOptionsDto>(jsonStr, jsonOptions);
-            }
-
-            if (dto == null)
-            {
-                HttpContext.Response.StatusCode = 400;
-                return new { error = "Invalid request body" };
-            }
-
-            var success = StarDetectionOptionsService.SetHocusFocusStarDetectionOptions(dto);
-            if (success)
-            {
-                return new { message = "StarDetectionOptions saved successfully" };
-            }
-            else
-            {
-                HttpContext.Response.StatusCode = 500;
-                return new { error = "Failed to save StarDetectionOptions" };
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Error saving StarDetectionOptions", ex);
-            HttpContext.Response.StatusCode = 500;
-            return new { error = ex.Message };
-        }
-    }
-
     [Route(HttpVerbs.Post, "/hocusfocus/star-detection/reset-defaults")]
     public async Task<object> ResetStarDetectionDefaults()
     {
         try
         {
-            var success = StarDetectionOptionsService.ResetStarDetectionDefaults();
-            if (success)
+            // Access HocusFocus StarDetectionOptions via reflection
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType == null)
             {
-                return new { message = "StarDetectionOptions reset to defaults successfully" };
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "HocusFocus plugin not loaded" };
             }
-            else
+
+            var starDetectionOptionsProperty = hocusFocusPluginType.GetProperty("StarDetectionOptions",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (starDetectionOptionsProperty == null)
             {
-                HttpContext.Response.StatusCode = 500;
-                return new { error = "Failed to reset StarDetectionOptions to defaults" };
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "StarDetectionOptions not accessible" };
+            }
+
+            var starDetectionOptions = starDetectionOptionsProperty.GetValue(null);
+            if (starDetectionOptions == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "StarDetectionOptions instance not available" };
+            }
+
+            // Call ResetDefaults method
+            var resetMethod = starDetectionOptions.GetType().GetMethod("ResetDefaults",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+            if (resetMethod == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = "ResetDefaults method not found" };
+            }
+
+            try
+            {
+                resetMethod.Invoke(starDetectionOptions, null);
+                Logger.Debug("[StarDetection] Successfully reset all options to defaults");
+                return new { success = true, message = "All StarDetection options have been reset to defaults" };
+            }
+            catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+            {
+                var innerEx = tiex.InnerException;
+                Logger.Error($"[StarDetection] Error resetting defaults: {innerEx.Message}", innerEx);
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = $"Failed to reset defaults: {innerEx.Message}" };
             }
         }
         catch (Exception ex)
         {
-            Logger.Error("Error resetting StarDetectionOptions to defaults", ex);
+            Logger.Error("Error resetting StarDetection options to defaults", ex);
             HttpContext.Response.StatusCode = 500;
-            return new { error = ex.Message };
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    [Route(HttpVerbs.Post, "/hocusfocus/star-detection/options/{optionName}")]
+    public async Task<object> SetStarDetectionOption(string optionName)
+    {
+        try
+        {
+            // Parse the request body to get the new value
+            object newValue = null;
+            string jsonStr = null;
+            using (var reader = new System.IO.StreamReader(HttpContext.Request.InputStream))
+            {
+                jsonStr = await reader.ReadToEndAsync();
+                Logger.Debug($"[StarDetection] SetStarDetectionOption {optionName} received: {jsonStr}");
+                if (!string.IsNullOrEmpty(jsonStr))
+                {
+                    var jsonOptions = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    // Parse as a simple value wrapper
+                    var valueDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(jsonStr, jsonOptions);
+                    if (valueDict != null && valueDict.ContainsKey("value"))
+                    {
+                        newValue = valueDict["value"];
+                    }
+                }
+            }
+
+            if (newValue == null && jsonStr != null && !jsonStr.Contains("null"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = "Value not provided in request body" };
+            }
+
+            // Access HocusFocus StarDetectionOptions via reflection
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "HocusFocus plugin not loaded" };
+            }
+
+            var starDetectionOptionsProperty = hocusFocusPluginType.GetProperty("StarDetectionOptions",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (starDetectionOptionsProperty == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "StarDetectionOptions not accessible" };
+            }
+
+            var starDetectionOptions = starDetectionOptionsProperty.GetValue(null);
+            if (starDetectionOptions == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { success = false, error = "StarDetectionOptions instance not available" };
+            }
+
+            // Find and set the property
+            var optionsType = starDetectionOptions.GetType();
+            var prop = optionsType.GetProperty(optionName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+
+            if (prop == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = $"Option '{optionName}' not found" };
+            }
+
+            if (!prop.CanWrite)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = $"Option '{optionName}' is read-only" };
+            }
+
+            try
+            {
+                // Convert the value to the correct type
+                var targetType = prop.PropertyType;
+                object convertedValue = null;
+                Logger.Debug($"[StarDetection] Converting {optionName} to type {targetType.Name}: raw value={newValue} (type={newValue?.GetType().Name ?? "null"})");
+
+                if (newValue == null)
+                {
+                    convertedValue = null;
+                }
+                else if (targetType == typeof(string))
+                {
+                    convertedValue = newValue.ToString();
+                }
+                else if (targetType == typeof(bool))
+                {
+                    if (newValue is bool boolVal)
+                    {
+                        convertedValue = boolVal;
+                    }
+                    else if (newValue is JsonElement elem)
+                    {
+                        convertedValue = elem.GetBoolean();
+                    }
+                    else if (newValue is string strVal)
+                    {
+                        convertedValue = bool.Parse(strVal);
+                    }
+                    else
+                    {
+                        convertedValue = Convert.ToBoolean(newValue);
+                    }
+                }
+                else if (targetType.IsEnum)
+                {
+                    string enumStringValue = null;
+                    
+                    if (newValue is JsonElement jelem)
+                    {
+                        enumStringValue = jelem.GetString();
+                    }
+                    else if (newValue is string strVal)
+                    {
+                        enumStringValue = strVal;
+                    }
+                    else
+                    {
+                        enumStringValue = newValue.ToString();
+                    }
+                    
+                    Logger.Debug($"[StarDetection] Parsing enum {targetType.Name} from string: {enumStringValue}");
+                    convertedValue = Enum.Parse(targetType, enumStringValue, ignoreCase: true);
+                }
+                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) ||
+                         targetType == typeof(decimal) || targetType == typeof(long) || targetType == typeof(short) ||
+                         targetType == typeof(uint) || targetType == typeof(ulong) || targetType == typeof(ushort))
+                {
+                    if (newValue is JsonElement jelem)
+                    {
+                        if (jelem.ValueKind == JsonValueKind.Number)
+                        {
+                            convertedValue = Convert.ChangeType(jelem.GetDecimal(), targetType);
+                        }
+                        else
+                        {
+                            convertedValue = Convert.ChangeType(jelem.ToString(), targetType);
+                        }
+                    }
+                    else
+                    {
+                        convertedValue = Convert.ChangeType(newValue, targetType);
+                    }
+                }
+                else
+                {
+                    convertedValue = newValue;
+                }
+
+                try
+                {
+                    prop.SetValue(starDetectionOptions, convertedValue);
+                    Logger.Debug($"[StarDetection] Successfully set {optionName} = {convertedValue}");
+                    return new { success = true, message = $"Option '{optionName}' updated successfully", value = convertedValue };
+                }
+                catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+                {
+                    // Unwrap TargetInvocationException from property setter validation
+                    var innerEx = tiex.InnerException;
+                    Logger.Error($"[StarDetection] Validation error setting {optionName} to {convertedValue}: {innerEx.Message}", innerEx);
+                    HttpContext.Response.StatusCode = 400;
+                    return new { success = false, error = $"Validation error: {innerEx.Message}" };
+                }
+            }
+            catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+            {
+                var innerEx = tiex.InnerException;
+                Logger.Error($"[StarDetection] Error during conversion/setting {optionName}: {innerEx.Message}", innerEx);
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = $"Failed to set option: {innerEx.Message}" };
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[StarDetection] Error setting {optionName}: {ex.Message}", ex);
+                HttpContext.Response.StatusCode = 400;
+                return new { success = false, error = $"Failed to set option: {ex.Message}" };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error setting StarDetection option", ex);
+            HttpContext.Response.StatusCode = 500;
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    [Route(HttpVerbs.Get, "/hocusfocus/aberration-inspector/options")]
+    public object GetAberrationInspectorOptions()
+    {
+        try
+        {
+            // Access HocusFocus InspectorOptions via reflection
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "HocusFocus plugin not loaded" }
+                };
+            }
+
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (aberrationInspectorOptionsProperty == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "InspectorOptions not accessible" }
+                };
+            }
+
+            var aberrationInspectorOptions = aberrationInspectorOptionsProperty.GetValue(null);
+            if (aberrationInspectorOptions == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "InspectorOptions instance not available" }
+                };
+            }
+
+            // Reflect over all properties and build a dictionary
+            var optionsDict = new Dictionary<string, object>();
+            var optionsType = aberrationInspectorOptions.GetType();
+            foreach (var prop in optionsType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                try
+                {
+                    optionsDict[prop.Name] = prop.GetValue(aberrationInspectorOptions);
+                }
+                catch
+                {
+                    // Skip properties that can't be read
+                }
+            }
+
+            return new Dictionary<string, object>()
+            {
+                { "Success", true },
+                { "Options", optionsDict }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error getting AberrationInspector options", ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>()
+            {
+                { "Success", false },
+                { "Error", ex.Message }
+            };
+        }
+    }
+
+    [Route(HttpVerbs.Post, "/hocusfocus/aberration-inspector/options/{optionName}")]
+    public async Task<object> SetAberrationInspectorOption(string optionName)
+    {
+        try
+        {
+            // Parse the request body to get the new value
+            object newValue = null;
+            string jsonStr = null;
+            using (var reader = new System.IO.StreamReader(HttpContext.Request.InputStream))
+            {
+                jsonStr = await reader.ReadToEndAsync();
+                Logger.Debug($"[Inspector] SetInspectorOption {optionName} received: {jsonStr}");
+                if (!string.IsNullOrEmpty(jsonStr))
+                {
+                    var jsonOptions = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    // Parse as a simple value wrapper
+                    var valueDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(jsonStr, jsonOptions);
+                    if (valueDict != null && valueDict.ContainsKey("value"))
+                    {
+                        newValue = valueDict["value"];
+                    }
+                }
+            }
+
+            if (newValue == null && jsonStr != null && !jsonStr.Contains("null"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = "Value not provided in request body" };
+            }
+
+            // Access HocusFocus InspectorOptions via reflection
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "HocusFocus plugin not loaded" };
+            }
+
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (aberrationInspectorOptionsProperty == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "InspectorOptions not accessible" };
+            }
+
+            var aberrationInspectorOptions = aberrationInspectorOptionsProperty.GetValue(null);
+            if (aberrationInspectorOptions == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "InspectorOptions instance not available" };
+            }
+
+            // Find and set the property
+            var optionsType = aberrationInspectorOptions.GetType();
+            var prop = optionsType.GetProperty(optionName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+
+            if (prop == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = $"Option '{optionName}' not found" };
+            }
+
+            if (!prop.CanWrite)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = $"Option '{optionName}' is read-only" };
+            }
+
+            try
+            {
+                // Convert the value to the correct type
+                var targetType = prop.PropertyType;
+                object convertedValue = null;
+                Logger.Debug($"[AberrationInspector] Converting {optionName} to type {targetType.Name}: raw value={newValue} (type={newValue?.GetType().Name ?? "null"})");
+
+                if (newValue == null)
+                {
+                    convertedValue = null;
+                }
+                else if (targetType == typeof(string))
+                {
+                    convertedValue = newValue.ToString();
+                }
+                else if (targetType == typeof(bool))
+                {
+                    if (newValue is bool boolVal)
+                    {
+                        convertedValue = boolVal;
+                    }
+                    else if (newValue is JsonElement elem)
+                    {
+                        convertedValue = elem.GetBoolean();
+                    }
+                    else if (newValue is string strVal)
+                    {
+                        convertedValue = bool.Parse(strVal);
+                    }
+                    else
+                    {
+                        convertedValue = Convert.ToBoolean(newValue);
+                    }
+                }
+                else if (targetType.IsEnum)
+                {
+                    if (newValue is JsonElement jelem)
+                    {
+                        convertedValue = Enum.Parse(targetType, jelem.GetString(), ignoreCase: true);
+                    }
+                    else
+                    {
+                        convertedValue = Enum.Parse(targetType, newValue.ToString(), ignoreCase: true);
+                    }
+                }
+                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) || 
+                         targetType == typeof(decimal) || targetType == typeof(long) || targetType == typeof(short) ||
+                         targetType == typeof(uint) || targetType == typeof(ulong) || targetType == typeof(ushort))
+                {
+                    if (newValue is JsonElement jelem)
+                    {
+                        if (jelem.ValueKind == JsonValueKind.Number)
+                        {
+                            convertedValue = Convert.ChangeType(jelem.GetDecimal(), targetType);
+                        }
+                        else
+                        {
+                            convertedValue = Convert.ChangeType(jelem.ToString(), targetType);
+                        }
+                    }
+                    else
+                    {
+                        convertedValue = Convert.ChangeType(newValue, targetType);
+                    }
+                }
+                else
+                {
+                    convertedValue = newValue;
+                }
+
+                try
+                {
+                    prop.SetValue(aberrationInspectorOptions, convertedValue);
+                    Logger.Debug($"[AberrationInspector] Successfully set {optionName} = {convertedValue}");
+                    return new { Success = true, Message = $"Option '{optionName}' updated successfully", Value = convertedValue };
+                }
+                catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+                {
+                    // Unwrap TargetInvocationException from property setter validation
+                    var innerEx = tiex.InnerException;
+                    Logger.Error($"[AberrationInspector] Validation error setting {optionName} to {convertedValue}: {innerEx.Message}", innerEx);
+                    HttpContext.Response.StatusCode = 400;
+                    return new { Success = false, Error = $"Validation error: {innerEx.Message}" };
+                }
+            }
+            catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+            {
+                var innerEx = tiex.InnerException;
+                Logger.Error($"[AberrationInspector] Error during conversion/setting {optionName}: {innerEx.Message}", innerEx);
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = $"Failed to set option: {innerEx.Message}" };
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[AberrationInspector] Error setting {optionName}: {ex.Message}", ex);
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = $"Failed to set option: {ex.Message}" };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error setting AberrationInspector option", ex);
+            HttpContext.Response.StatusCode = 500;
+            return new { Success = false, Error = ex.Message };
+        }
+    }
+
+    [Route(HttpVerbs.Post, "/hocusfocus/aberration-inspector/reset-defaults")]
+    public object ResetAberrationInspectorDefaults()
+    {
+        try
+        {
+            // Access HocusFocus InspectorOptions via reflection
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "HocusFocus plugin not loaded" };
+            }
+
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (aberrationInspectorOptionsProperty == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "InspectorOptions not accessible" };
+            }
+
+            var aberrationInspectorOptions = aberrationInspectorOptionsProperty.GetValue(null);
+            if (aberrationInspectorOptions == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new { Success = false, Error = "InspectorOptions instance not available" };
+            }
+
+            // Call ResetDefaults method
+            var resetMethod = aberrationInspectorOptions.GetType().GetMethod("ResetDefaults", 
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+            if (resetMethod == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = "ResetDefaults method not found" };
+            }
+
+            try
+            {
+                resetMethod.Invoke(aberrationInspectorOptions, null);
+                Logger.Debug("[Inspector] Successfully reset all options to defaults");
+                return new { Success = true, Message = "All AberrationInspector options have been reset to defaults" };
+            }
+            catch (TargetInvocationException tiex) when (tiex.InnerException != null)
+            {
+                var innerEx = tiex.InnerException;
+                Logger.Error($"[Inspector] Error resetting defaults: {innerEx.Message}", innerEx);
+                HttpContext.Response.StatusCode = 400;
+                return new { Success = false, Error = $"Failed to reset defaults: {innerEx.Message}" };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error resetting Inspector options to defaults", ex);
+            HttpContext.Response.StatusCode = 500;
+            return new { Success = false, Error = ex.Message };
         }
     }
 }

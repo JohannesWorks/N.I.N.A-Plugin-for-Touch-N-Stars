@@ -28,9 +28,9 @@ namespace TouchNStars.Server.Services {
                 // Map DTO properties
                 dto.UseAdvanced = GetPropertyValueAsType<bool>(starDetectionOptions, "UseAdvanced", false);
                 dto.ModelPSF = GetPropertyValueAsType<bool>(starDetectionOptions, "ModelPSF", false);
-                dto.SimpleNoiseLevel = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_NoiseLevel"));
-                dto.SimplePixelScale = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_PixelScale"));
-                dto.SimpleFocusRange = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_FocusRange"));
+                dto.Simple_NoiseLevel = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_NoiseLevel"));
+                dto.Simple_PixelScale = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_PixelScale"));
+                dto.Simple_FocusRange = ConvertEnumToString(GetPropertyValue(starDetectionOptions, "Simple_FocusRange"));
                 dto.HotpixelFiltering = GetPropertyValueAsType<bool>(starDetectionOptions, "HotpixelFiltering", false);
                 dto.HotpixelThresholdingEnabled = GetPropertyValueAsType<bool>(starDetectionOptions, "HotpixelThresholdingEnabled", false);
                 dto.UseAutoFocusCrop = GetPropertyValueAsType<bool>(starDetectionOptions, "UseAutoFocusCrop", false);
@@ -83,9 +83,9 @@ namespace TouchNStars.Server.Services {
                 // Set DTO properties
                 SetPropertyValue(starDetectionOptions, "UseAdvanced", dto.UseAdvanced);
                 SetPropertyValue(starDetectionOptions, "ModelPSF", dto.ModelPSF);
-                SetPropertyValueFromString(starDetectionOptions, "Simple_NoiseLevel", dto.SimpleNoiseLevel);
-                SetPropertyValueFromString(starDetectionOptions, "Simple_PixelScale", dto.SimplePixelScale);
-                SetPropertyValueFromString(starDetectionOptions, "Simple_FocusRange", dto.SimpleFocusRange);
+                SetPropertyValueFromString(starDetectionOptions, "Simple_NoiseLevel", dto.Simple_NoiseLevel);
+                SetPropertyValueFromString(starDetectionOptions, "Simple_PixelScale", dto.Simple_PixelScale);
+                SetPropertyValueFromString(starDetectionOptions, "Simple_FocusRange", dto.Simple_FocusRange);
                 SetPropertyValue(starDetectionOptions, "HotpixelFiltering", dto.HotpixelFiltering);
                 SetPropertyValue(starDetectionOptions, "HotpixelThresholdingEnabled", dto.HotpixelThresholdingEnabled);
                 SetPropertyValue(starDetectionOptions, "UseAutoFocusCrop", dto.UseAutoFocusCrop);
@@ -160,27 +160,21 @@ namespace TouchNStars.Server.Services {
                     return null;
                 }
 
-                var starAnnotatorOptionsProperty = hocusFocusPluginType.GetProperty("StarAnnotatorOptions", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                if (starAnnotatorOptionsProperty == null) {
-                    Logger.Warning("StarAnnotatorOptions property not found on HocusFocusPlugin");
+                var starDetectionOptionsProperty = hocusFocusPluginType.GetProperty("StarDetectionOptions", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                if (starDetectionOptionsProperty == null) {
+                    Logger.Warning("StarDetectionOptions property not found on HocusFocusPlugin");
                     return null;
                 }
 
-                var starAnnotatorOptions = starAnnotatorOptionsProperty.GetValue(null);
-                if (starAnnotatorOptions == null) {
-                    Logger.Warning("StarAnnotatorOptions instance is null");
+                var starDetectionOptions = starDetectionOptionsProperty.GetValue(null);
+                if (starDetectionOptions == null) {
+                    Logger.Warning("StarDetectionOptions instance is null");
                     return null;
                 }
 
-                var detectorOptionsProperty = starAnnotatorOptions.GetType().GetProperty("DetectorOptions", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (detectorOptionsProperty == null) {
-                    Logger.Warning("DetectorOptions property not found on StarAnnotatorOptions");
-                    return null;
-                }
-
-                return detectorOptionsProperty.GetValue(starAnnotatorOptions);
+                return starDetectionOptions;
             } catch (Exception ex) {
-                Logger.Error("Error getting HocusFocusPlugin.StarAnnotatorOptions.DetectorOptions via reflection", ex);
+                Logger.Error("Error getting HocusFocusPlugin.StarDetectionOptions via reflection", ex);
                 return null;
             }
         }
