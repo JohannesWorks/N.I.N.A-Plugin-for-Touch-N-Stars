@@ -645,54 +645,6 @@ namespace TouchNStars.PHD2
             return profiles;
         }
 
-        public List<string> GetCameraList()
-        {
-            CheckConnected();
-            var result = Call("get_available_cameras");
-            var cameras = new List<string>();
-
-            foreach (var camera in result["result"])
-            {
-                cameras.Add((string)camera);
-            }
-
-            return cameras;
-        }
-
-        public string GetSelectedCameraId()
-        {
-            CheckConnected();
-            var result = Call("get_selected_camera_id");
-
-            if (result["result"] == null || result["result"].Type == JTokenType.Null)
-            {
-                return null;
-            }
-
-            return (string)result["result"];
-        }
-
-        public List<string> GetCameraInstances()
-        {
-            CheckConnected();
-            var result = Call("get_available_camera_ids");
-            var instances = new List<string>();
-
-            foreach (var instance in result["result"])
-            {
-                instances.Add((string)instance);
-            }
-
-            return instances;
-        }
-
-        public void SetSelectedCamera(string cameraId)
-        {
-            CheckConnected();
-            var param = new JObject { ["camera_id"] = cameraId };
-            Call("set_selected_camera", param);
-        }
-
         public Dictionary<string, List<string>> GetAllCameraIds()
         {
             CheckConnected();
@@ -716,61 +668,6 @@ namespace TouchNStars.PHD2
             }
 
             return cameraIds;
-        }
-
-        // Mount methods
-        public List<string> GetMountList()
-        {
-            CheckConnected();
-            var result = Call("get_available_mounts");
-            var mounts = new List<string>();
-
-            foreach (var mount in result["result"])
-            {
-                mounts.Add((string)mount);
-            }
-
-            return mounts;
-        }
-
-        public string GetSelectedMount()
-        {
-            CheckConnected();
-            var result = Call("get_selected_mount");
-
-            if (result["result"] == null || result["result"].Type == JTokenType.Null)
-            {
-                return null;
-            }
-
-            return (string)result["result"];
-        }
-
-        public void SetSelectedMount(string mountId)
-        {
-            CheckConnected();
-            var param = new JObject { ["mount_id"] = mountId };
-            Call("set_selected_mount", param);
-        }
-
-        public string GetSelectedINDIMountDriver()
-        {
-            CheckConnected();
-            var result = Call("get_selected_indi_mount_driver");
-
-            if (result["result"] == null || result["result"].Type == JTokenType.Null)
-            {
-                return null;
-            }
-
-            return (string)result["result"];
-        }
-
-        public void SetSelectedINDIMountDriver(string driverName)
-        {
-            CheckConnected();
-            var param = new JObject { ["driver"] = driverName };
-            Call("set_selected_indi_mount_driver", param);
         }
 
         public int CreateProfile(string profileName)
