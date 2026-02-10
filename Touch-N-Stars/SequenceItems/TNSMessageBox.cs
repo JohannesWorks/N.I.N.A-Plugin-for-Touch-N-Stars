@@ -34,16 +34,24 @@ namespace TouchNStars.SequenceItems {
                 if (!templatesLoaded) {
                     try {
                         // Load the MessageBox item template (for Sequencer UI)
-                        var itemTemplate = new ResourceDictionary {
-                            Source = new Uri("pack://application:,,,/TouchNStars;component/SequenceItems/Templates/TNSMessageBoxTemplate.xaml", UriKind.Absolute)
-                        };
-                        Application.Current?.Resources.MergedDictionaries.Add(itemTemplate);
+                        try {
+                            var itemTemplate = new ResourceDictionary {
+                                Source = new Uri("pack://application:,,,/TouchNStars;component/SequenceItems/Templates/TNSMessageBoxTemplate.xaml", UriKind.Absolute)
+                            };
+                            Application.Current?.Resources.MergedDictionaries.Add(itemTemplate);
+                        } catch (System.UriFormatException itemEx) {
+                            Logger.Warning($"Failed to load TNSMessageBox item template: {itemEx.Message}");
+                        }
 
                         // Load the MessageBox result template (for Dialog window)
-                        var resultTemplate = new ResourceDictionary {
-                            Source = new Uri("pack://application:,,,/TouchNStars;component/SequenceItems/Templates/TNSMessageBoxResultTemplate.xaml", UriKind.Absolute)
-                        };
-                        Application.Current?.Resources.MergedDictionaries.Add(resultTemplate);
+                        try {
+                            var resultTemplate = new ResourceDictionary {
+                                Source = new Uri("pack://application:,,,/TouchNStars;component/SequenceItems/Templates/TNSMessageBoxResultTemplate.xaml", UriKind.Absolute)
+                            };
+                            Application.Current?.Resources.MergedDictionaries.Add(resultTemplate);
+                        } catch (System.UriFormatException resultEx) {
+                            Logger.Warning($"Failed to load TNSMessageBox result template: {resultEx.Message}");
+                        }
 
                         templatesLoaded = true;
                         Logger.Debug("TNSMessageBox templates loaded successfully");

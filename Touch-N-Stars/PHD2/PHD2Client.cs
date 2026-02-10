@@ -272,7 +272,7 @@ namespace TouchNStars.PHD2
         {
             string jsonRpc = MakeJsonRpc(method, param);
             Debug.WriteLine($"PHD2 Call: {jsonRpc}");
-            
+
             // Also log to NINA logger for better visibility
             if (method == "set_algo_param")
             {
@@ -295,15 +295,15 @@ namespace TouchNStars.PHD2
             lock (syncObject)
             {
                 var timeout = DateTime.Now.AddSeconds(10); // 10 second timeout
-                
+
                 while (response == null && DateTime.Now < timeout)
                 {
                     if (!IsConnected)
                         throw new PHD2Exception("PHD2 Server disconnected during call");
-                        
+
                     Monitor.Wait(syncObject, 1000); // Wait max 1 second at a time
                 }
-                
+
                 if (response == null)
                 {
                     throw new PHD2Exception($"Timeout waiting for response to {method} - PHD2 may be disconnected");
@@ -377,7 +377,7 @@ namespace TouchNStars.PHD2
         private void HandleEvent(JObject eventObj)
         {
             string eventType = (string)eventObj["Event"];
-            
+
             switch (eventType)
             {
                 case "AppState":
@@ -405,7 +405,7 @@ namespace TouchNStars.PHD2
                     }
                     AppState = "Guiding";
                     AvgDist = (double)eventObj["AvgDist"];
-                    
+
                     // Update current star info from GuideStep event
                     if (CurrentStar != null)
                     {
@@ -427,7 +427,7 @@ namespace TouchNStars.PHD2
                 case "StarLost":
                     AppState = "LostLock";
                     AvgDist = (double)eventObj["AvgDist"];
-                    
+
                     // Capture detailed star lost information
                     LastStarLost = new StarLostInfo
                     {
@@ -636,22 +636,101 @@ namespace TouchNStars.PHD2
             CheckConnected();
             var result = Call("get_profiles");
             var profiles = new List<string>();
-            
+
             foreach (var profile in result["result"])
             {
                 profiles.Add((string)profile["name"]);
             }
-            
+
             return profiles;
+        }
+
+        public Dictionary<string, List<string>> GetAllCameraIds()
+        {
+            CheckConnected();
+            var result = Call("get_all_camera_ids");
+            var cameraIds = new Dictionary<string, List<string>>();
+
+            if (result["result"] is JObject resultObj)
+            {
+                foreach (var property in resultObj.Properties())
+                {
+                    var cameraName = property.Name;
+                    var ids = new List<string>();
+
+                    foreach (var id in property.Value.Values<string>())
+                    {
+                        ids.Add(id);
+                    }
+
+                    cameraIds[cameraName] = ids;
+                }
+            }
+
+            return cameraIds;
+        }
+
+        public int CreateProfile(string profileName)
+        {
+            CheckConnected();
+
+            if (string.IsNullOrEmpty(profileName))
+                throw new PHD2Exception("Profile name cannot be empty");
+
+            var parameters = new JObject { ["name"] = profileName };
+
+            try
+            {
+                var result = Call("create_profile", parameters);
+                return (int)result["result"];
+            }
+            catch (PHD2Exception ex)
+            {
+                if (ex.Message.Contains("profile already exists"))
+                {
+                    // Profile already exists, get its ID
+                    var profiles = Call("get_profiles");
+                    foreach (var profile in profiles["result"])
+                    {
+                        if ((string)profile["name"] == profileName)
+                        {
+                            return (int)profile["id"];
+                        }
+                    }
+                }
+                throw;
+            }
+        }
+
+        public void DeleteProfile(string profileName)
+        {
+            CheckConnected();
+
+            if (string.IsNullOrEmpty(profileName))
+                throw new PHD2Exception("Profile name cannot be empty");
+
+            var parameters = new JObject { ["name"] = profileName };
+            Call("delete_profile", parameters);
+        }
+
+        public void RenameProfile(string newName)
+        {
+            CheckConnected();
+
+            if (string.IsNullOrEmpty(newName))
+                throw new PHD2Exception("Profile name cannot be empty");
+
+            var parameters = new JObject { ["name"] = newName };
+            Call("rename_profile", parameters);
         }
 
         public void ConnectEquipment(string profileName)
         {
             CheckConnected();
-            
+
             var profiles = Call("get_profiles");
             int profileId = -1;
-            
+
             foreach (var profile in profiles["result"])
             {
                 if ((string)profile["name"] == profileName)
@@ -660,7 +739,7 @@ namespace TouchNStars.PHD2
                     break;
                 }
             }
-            
+
             if (profileId == -1)
                 throw new PHD2Exception($"Invalid PHD2 profile name: {profileName}");
 
@@ -682,14 +761,369 @@ namespace TouchNStars.PHD2
             CheckConnected();
             var result = Call("get_pixel_scale");
             var pixelScale = result["result"];
-            
+
             // PHD2 returns null when no pixel scale is configured (e.g., no camera connected or no calibration done)
             if (pixelScale == null || pixelScale.Type == JTokenType.Null)
             {
                 throw new PHD2Exception("Pixel scale not available - camera may not be connected or calibration not done");
             }
-            
+
             return (double)pixelScale;
+        }
+
+        public int GetFocalLength()
+        {
+            CheckConnected();
+            var result = Call("get_focal_length");
+            var focalLength = result["result"];
+
+            // PHD2 returns null when no focal length is configured
+            if (focalLength == null || focalLength.Type == JTokenType.Null)
+            {
+                throw new PHD2Exception("Focal length not available");
+            }
+
+            return (int)focalLength;
+        }
+
+        public void SetFocalLength(int focalLength)
+        {
+            CheckConnected();
+            Call("set_focal_length", focalLength);
+        }
+
+        // Calibration methods
+        public int GetCalibrationStep()
+        {
+            CheckConnected();
+            var result = Call("get_calibration_step");
+            var step = result["result"];
+
+            if (step == null || step.Type == JTokenType.Null)
+            {
+                throw new PHD2Exception("Calibration step not available");
+            }
+
+            return (int)step;
+        }
+
+        public void SetCalibrationStep(int step)
+        {
+            CheckConnected();
+            Call("set_calibration_step", step);
+        }
+
+        public void ClearMountCalibration()
+        {
+            CheckConnected();
+            Call("clear_mount_calibration");
+        }
+
+        // Auto-restore calibration methods
+        public bool GetAutoRestoreCalibration()
+        {
+            CheckConnected();
+            var result = Call("get_auto_restore_calibration");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetAutoRestoreCalibration(bool enabled)
+        {
+            CheckConnected();
+            Call("set_auto_restore_calibration", enabled);
+        }
+
+        // Orthogonal assumption methods
+        public bool GetAssumeDecOrthogonal()
+        {
+            CheckConnected();
+            var result = Call("get_assume_dec_orthogonal");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetAssumeDecOrthogonal(bool enabled)
+        {
+            CheckConnected();
+            Call("set_assume_dec_orthogonal", enabled);
+        }
+
+        // DEC compensation methods
+        public bool GetUseDecCompensation()
+        {
+            CheckConnected();
+            var result = Call("get_use_dec_compensation");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetUseDecCompensation(bool enabled)
+        {
+            CheckConnected();
+            Call("set_use_dec_compensation", enabled);
+        }
+
+        // Search region method
+        public int GetSearchRegion()
+        {
+            CheckConnected();
+            var result = Call("get_search_region");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return 0;
+
+            return (int)value;
+        }
+
+        public void SetSearchRegion(int pixels)
+        {
+            CheckConnected();
+            Call("set_search_region", pixels);
+        }
+
+        // HFR threshold methods
+        public double GetMinStarHFR()
+        {
+            CheckConnected();
+            var result = Call("get_min_star_hfd");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return 0.0;
+
+            return (double)value;
+        }
+
+        public void SetMinStarHFR(double hfr)
+        {
+            CheckConnected();
+            Call("set_min_star_hfd", hfr);
+        }
+
+        public double GetMaxStarHFR()
+        {
+            CheckConnected();
+            var result = Call("get_max_star_hfd");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return 0.0;
+
+            return (double)value;
+        }
+
+        public void SetMaxStarHFR(double hfr)
+        {
+            CheckConnected();
+            Call("set_max_star_hfd", hfr);
+        }
+
+        // Lost star beep method
+        public bool GetBeepForLostStar()
+        {
+            CheckConnected();
+            var result = Call("get_beep_for_lost_star");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetBeepForLostStar(bool enabled)
+        {
+            CheckConnected();
+            Call("set_beep_for_lost_star", enabled);
+        }
+
+        // Mass change threshold methods
+        public bool GetMassChangeThresholdEnabled()
+        {
+            CheckConnected();
+            var result = Call("get_mass_change_threshold_enabled");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetMassChangeThresholdEnabled(bool enabled)
+        {
+            CheckConnected();
+            Call("set_mass_change_threshold_enabled", enabled);
+        }
+
+        public double GetMassChangeThreshold()
+        {
+            CheckConnected();
+            var result = Call("get_mass_change_threshold");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return 0.0;
+
+            return (double)value;
+        }
+
+        public void SetMassChangeThreshold(double threshold)
+        {
+            CheckConnected();
+            Call("set_mass_change_threshold", threshold);
+        }
+
+        // AF SNR method
+        public double GetAFMinStarSNR()
+        {
+            CheckConnected();
+            var result = Call("get_af_min_star_snr");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return 0.0;
+
+            return (double)value;
+        }
+
+        public void SetAFMinStarSNR(double snr)
+        {
+            CheckConnected();
+            Call("set_af_min_star_snr", snr);
+        }
+
+        // Multi-star mode method
+        public bool GetUseMultipleStars()
+        {
+            CheckConnected();
+            var result = Call("get_use_multiple_stars");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetUseMultipleStars(bool enabled)
+        {
+            CheckConnected();
+            Call("set_use_multiple_stars", enabled);
+        }
+
+        // Auto-select downsample method
+        public string GetAutoSelectDownsample()
+        {
+            CheckConnected();
+            var result = Call("get_auto_select_downsample");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return "Auto";
+
+            return (string)value;
+        }
+
+        public void SetAutoSelectDownsample(string value)
+        {
+            CheckConnected();
+            // Validate the value
+            if (value != "Auto" && value != "1" && value != "2" && value != "3")
+            {
+                throw new PHD2Exception($"Invalid downsample value: {value}. Must be 'Auto', '1', '2', or '3'");
+            }
+            Call("set_auto_select_downsample", value);
+        }
+
+        // Image scaling method
+        public bool GetAlwaysScaleImages()
+        {
+            CheckConnected();
+            var result = Call("get_always_scale_images");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetAlwaysScaleImages(bool enabled)
+        {
+            CheckConnected();
+            Call("set_always_scale_images", enabled);
+        }
+
+        // Meridian flip methods
+        public bool GetReverseDecAfterFlip()
+        {
+            CheckConnected();
+            var result = Call("get_reverse_dec_on_flip");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetReverseDecAfterFlip(bool enabled)
+        {
+            CheckConnected();
+            Call("set_reverse_dec_on_flip", enabled);
+        }
+
+        // Fast recenter methods
+        public bool GetFastRecenterEnabled()
+        {
+            CheckConnected();
+            var result = Call("get_fast_recenter_enabled");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetFastRecenterEnabled(bool enabled)
+        {
+            CheckConnected();
+            Call("set_fast_recenter_enabled", enabled);
+        }
+
+        // Mount guide output methods
+        public bool GetMountGuideOutputEnabled()
+        {
+            CheckConnected();
+            var result = Call("get_mount_guide_output_enabled");
+            var value = result["result"];
+
+            if (value == null || value.Type == JTokenType.Null)
+                return false;
+
+            return (bool)value;
+        }
+
+        public void SetMountGuideOutputEnabled(bool enabled)
+        {
+            CheckConnected();
+            Call("set_mount_guide_output_enabled", enabled);
         }
 
         public PHD2Status GetStatus()
@@ -729,7 +1163,7 @@ namespace TouchNStars.PHD2
             // Valid modes: "Off", "Auto", "North", "South"
             if (!new[] { "Off", "Auto", "North", "South" }.Contains(mode))
                 throw new PHD2Exception($"Invalid Dec guide mode: {mode}. Valid modes are: Off, Auto, North, South");
-            
+
             Call("set_dec_guide_mode", new JValue(mode));
         }
 
@@ -759,7 +1193,7 @@ namespace TouchNStars.PHD2
             // Valid axes: "RA/Dec", "X/Y"
             if (!new[] { "arcsec/hr", "pixels/hr" }.Contains(units))
                 throw new PHD2Exception($"Invalid units: {units}. Valid units are: arcsec/hr, pixels/hr");
-            
+
             if (!new[] { "RA/Dec", "X/Y" }.Contains(axes))
                 throw new PHD2Exception($"Invalid axes: {axes}. Valid axes are: RA/Dec, X/Y");
 
@@ -782,13 +1216,13 @@ namespace TouchNStars.PHD2
 
             // Round to 3 decimal places to avoid floating point precision issues
             double roundedValue = Math.Round(value, 3);
-            
+
             var param = new JArray { axis, name, roundedValue };
-            
+
             // Log the exact JSON being sent to PHD2
             Debug.WriteLine($"PHD2 SetAlgoParam: axis={axis}, name={name}, original={value:F10}, rounded={roundedValue:F10}");
             Debug.WriteLine($"PHD2 SetAlgoParam JSON: {param.ToString()}");
-            
+
             Call("set_algo_param", param);
         }
 
@@ -919,30 +1353,30 @@ namespace TouchNStars.PHD2
             {
                 CheckConnected();
                 var result = Call("get_current_equipment");
-                
+
                 var equipmentObj = new Dictionary<string, object>();
                 var resultData = result["result"];
-                
+
                 // PHD2's get_current_equipment returns an object with device info including connection status
                 // Format: {"camera": {"name": "Simulator", "connected": true}, "mount": {"name": "On Camera", "connected": true}, ...}
-                
+
                 if (resultData is JObject equipmentDict)
                 {
                     // Handle the standard object format returned by PHD2
                     foreach (var kvp in equipmentDict)
                     {
                         string deviceType = kvp.Key.ToLower();
-                        
+
                         if (kvp.Value is JObject deviceInfo)
                         {
                             // PHD2 returns device info as an object with name and connected properties
                             var deviceObj = new Dictionary<string, object>();
-                            
+
                             if (deviceInfo["name"] != null)
                             {
                                 deviceObj["name"] = deviceInfo["name"].ToString();
                             }
-                            
+
                             if (deviceInfo["connected"] != null)
                             {
                                 deviceObj["connected"] = deviceInfo["connected"].Value<bool>();
@@ -952,7 +1386,7 @@ namespace TouchNStars.PHD2
                                 // Fallback: if connected field is missing, assume connected if device has a name
                                 deviceObj["connected"] = !string.IsNullOrEmpty(deviceObj.ContainsKey("name") ? deviceObj["name"].ToString() : "");
                             }
-                            
+
                             equipmentObj[deviceType] = deviceObj;
                         }
                         else
@@ -976,7 +1410,7 @@ namespace TouchNStars.PHD2
                         {
                             string deviceType = item[0].ToString().ToLower();
                             string deviceName = item[1].ToString();
-                            
+
                             equipmentObj[deviceType] = new Dictionary<string, object>
                             {
                                 ["name"] = deviceName,
@@ -990,7 +1424,7 @@ namespace TouchNStars.PHD2
                     // Unknown format, return empty equipment list
                     System.Diagnostics.Debug.WriteLine($"Unknown equipment format: {resultData?.Type}");
                 }
-                
+
                 return equipmentObj;
             }
             catch (PHD2Exception)
@@ -1015,13 +1449,13 @@ namespace TouchNStars.PHD2
         public double[] FindStar(int[] roi = null)
         {
             CheckConnected();
-            
+
             JObject result;
             if (roi != null)
             {
                 if (roi.Length != 4)
                     throw new PHD2Exception("ROI must be an array of 4 integers: [x, y, width, height]");
-                
+
                 var roiParam = new JArray { roi[0], roi[1], roi[2], roi[3] };
                 result = Call("find_star", new JObject { ["roi"] = roiParam });
             }
@@ -1029,13 +1463,13 @@ namespace TouchNStars.PHD2
             {
                 result = Call("find_star");
             }
-            
+
             var pos = result["result"];
             if (pos.Type == JTokenType.Array && pos.Count() == 2)
             {
                 return new double[] { (double)pos[0], (double)pos[1] };
             }
-            
+
             throw new PHD2Exception("find_star did not return valid coordinates");
         }
 
@@ -1048,10 +1482,10 @@ namespace TouchNStars.PHD2
             CheckConnected();
             var result = Call("save_image");
             var filename = (string)result["result"]["filename"];
-            
+
             if (string.IsNullOrEmpty(filename))
                 throw new PHD2Exception("save_image did not return a valid filename");
-                
+
             return filename;
         }
 
@@ -1063,7 +1497,7 @@ namespace TouchNStars.PHD2
         public StarImageData GetStarImage(int? size = null)
         {
             CheckConnected();
-            
+
             JObject result;
             if (size.HasValue)
             {
@@ -1075,15 +1509,15 @@ namespace TouchNStars.PHD2
             {
                 result = Call("get_star_image");
             }
-            
+
             var resultData = result["result"];
             if (resultData == null)
                 throw new PHD2Exception("get_star_image returned null result");
-            
+
             return new StarImageData
             {
                 Frame = (int)resultData["frame"],
-                Width = (int)resultData["width"], 
+                Width = (int)resultData["width"],
                 Height = (int)resultData["height"],
                 StarPosX = (double)resultData["star_pos"][0],
                 StarPosY = (double)resultData["star_pos"][1],
@@ -1140,7 +1574,7 @@ namespace TouchNStars.PHD2
             CheckConnected();
             var result = Call("get_profile");
             var profileResult = result["result"];
-            
+
             // PHD2's get_profile can return either a string or an object
             if (profileResult.Type == JTokenType.String)
             {
@@ -1173,12 +1607,260 @@ namespace TouchNStars.PHD2
                     ["name"] = profileObj["name"]?.ToString() ?? ""
                 };
             }
-            
+
             // Fallback - return as string
             return new Dictionary<string, object>
             {
                 ["name"] = profileResult.ToString()
             };
         }
+
+        // Camera control methods
+        public int GetCameraGain()
+        {
+            CheckConnected();
+            var result = Call("get_camera_gain");
+            if (result == null || result["result"] == null)
+                return 0;
+            return (int)result["result"];
+        }
+
+        public void SetCameraGain(int gain)
+        {
+            CheckConnected();
+            var param = new JObject { ["gain"] = gain };
+            Call("set_camera_gain", param);
+        }
+
+        public bool GetCameraCoolerOn()
+        {
+            CheckConnected();
+            var result = Call("get_camera_cooler_on");
+            if (result == null || result["result"] == null)
+                return false;
+            return (bool)result["result"];
+        }
+
+        public void SetCameraCoolerOn(bool enabled)
+        {
+            CheckConnected();
+            var param = new JObject { ["enabled"] = enabled };
+            Call("set_camera_cooler_on", param);
+        }
+
+        public double GetCameraTemperatureSetpoint()
+        {
+            CheckConnected();
+            var result = Call("get_camera_temperature_setpoint");
+            if (result == null || result["result"] == null)
+                return 0.0;
+            return (double)result["result"];
+        }
+
+        public void SetCameraTemperatureSetpoint(double temperature)
+        {
+            CheckConnected();
+            var param = new JObject { ["temperature"] = temperature };
+            Call("set_camera_temperature_setpoint", param);
+        }
+
+        public bool GetCameraUseSubframes()
+        {
+            CheckConnected();
+            var result = Call("get_camera_use_subframes");
+            if (result == null || result["result"] == null)
+                return false;
+            return (bool)result["result"];
+        }
+
+        public void SetCameraUseSubframes(bool enabled)
+        {
+            CheckConnected();
+            var param = new JObject { ["enabled"] = enabled };
+            Call("set_camera_use_subframes", param);
+        }
+
+        public int GetCameraBinning()
+        {
+            CheckConnected();
+            var result = Call("get_camera_binning");
+            if (result == null || result["result"] == null)
+                return 0;
+            return (int)result["result"];
+        }
+
+        public void SetCameraBinning(int binning)
+        {
+            CheckConnected();
+            var param = new JObject { ["binning"] = binning };
+            Call("set_camera_binning", param);
+        }
+
+        // Auto exposure methods
+        public double GetAutoExposureMin()
+        {
+            CheckConnected();
+            var result = Call("get_auto_exposure_min");
+            if (result == null || result["result"] == null)
+                return 0.0;
+            return (double)result["result"];
+        }
+
+        public void SetAutoExposureMin(double min)
+        {
+            CheckConnected();
+            var param = new JObject { ["exposure"] = min };
+            Call("set_auto_exposure_min", param);
+        }
+
+        public double GetAutoExposureMax()
+        {
+            CheckConnected();
+            var result = Call("get_auto_exposure_max");
+            if (result == null || result["result"] == null)
+                return 0.0;
+            return (double)result["result"];
+        }
+
+        public void SetAutoExposureMax(double max)
+        {
+            CheckConnected();
+            var param = new JObject { ["exposure"] = max };
+            Call("set_auto_exposure_max", param);
+        }
+
+        public double GetAutoExposureTargetSNR()
+        {
+            CheckConnected();
+            var result = Call("get_auto_exposure_target_snr");
+            if (result == null || result["result"] == null)
+                return 0.0;
+            return (double)result["result"];
+        }
+
+        public void SetAutoExposureTargetSNR(double snr)
+        {
+            CheckConnected();
+            var param = new JObject { ["target_snr"] = snr };
+            Call("set_auto_exposure_target_snr", param);
+        }
+
+        // Dither mode
+        public string GetDitherMode()
+        {
+            CheckConnected();
+            var result = Call("get_dither_mode");
+            if (result == null || result["result"] == null)
+                return "random";
+            return (string)result["result"];
+        }
+
+        public void SetDitherMode(string mode)
+        {
+            CheckConnected();
+            var param = new JObject { ["mode"] = mode };
+            Call("set_dither_mode", param);
+        }
+
+        public bool GetDitherRaOnly()
+        {
+            CheckConnected();
+            var result = Call("get_dither_ra_only");
+            if (result == null || result["result"] == null)
+                return false;
+            return (bool)result["result"];
+        }
+
+        public void SetDitherRaOnly(bool raOnly)
+        {
+            CheckConnected();
+            var param = new JObject { ["ra_only"] = raOnly };
+            Call("set_dither_ra_only", param);
+        }
+
+        public double GetDitherScale()
+        {
+            CheckConnected();
+            var result = Call("get_dither_scale");
+            if (result == null || result["result"] == null)
+                return 1.0;
+            return (double)result["result"];
+        }
+
+        public void SetDitherScale(double scale)
+        {
+            CheckConnected();
+            var param = new JObject { ["scale"] = scale };
+            Call("set_dither_scale", param);
+        }
+
+        // Saturation by ADU
+        public bool GetSaturationByADU()
+        {
+            CheckConnected();
+            var result = Call("get_saturation_by_adu");
+            if (result == null || result["result"] == null)
+                return false;
+            return (bool)result["result"];
+        }
+
+        public void SetSaturationByADU(bool byADU, int? aduValue = null)
+        {
+            CheckConnected();
+            var param = new JObject { ["by_adu"] = byADU };
+            if (byADU && aduValue.HasValue)
+                param["adu_value"] = aduValue.Value;
+            Call("set_saturation_by_adu", param);
+        }
+
+        public int GetSaturationADUValue()
+        {
+            CheckConnected();
+            var result = Call("get_saturation_adu_value");
+            if (result == null || result["result"] == null)
+                return 0;
+            return (int)result["result"];
+        }
+
+        // Guide algorithm selection
+        public string GetGuideAlgorithmRA()
+        {
+            CheckConnected();
+            var result = Call("get_guide_algorithm_ra");
+            if (result == null || result["result"] == null)
+                return "None";
+            return (string)result["result"];
+        }
+
+        public void SetGuideAlgorithmRA(string algorithm)
+        {
+            CheckConnected();
+            var param = new JObject { ["algorithm"] = algorithm };
+            Call("set_guide_algorithm_ra", param);
+        }
+
+        public string GetGuideAlgorithmDEC()
+        {
+            CheckConnected();
+            var result = Call("get_guide_algorithm_dec");
+            if (result == null || result["result"] == null)
+                return "None";
+            return (string)result["result"];
+        }
+
+        public void SetGuideAlgorithmDEC(string algorithm)
+        {
+            CheckConnected();
+            var param = new JObject { ["algorithm"] = algorithm };
+            Call("set_guide_algorithm_dec", param);
+        }
+
+        public void SetSaturationADUValue(int aduValue)
+        {
+            CheckConnected();
+            var param = new JObject { ["adu_value"] = aduValue };
+            Call("set_saturation_adu_value", param);
+        }
+
     }
 }

@@ -29,6 +29,9 @@ namespace TouchNStars.Server {
             string assemblyFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             string webAppDir = Path.Combine(assemblyFolder, "app");
 
+            // Suppress EmbedIO verbose logging by unregistering the logger
+            Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>();
+
             WebServer = new WebServer(o => o
                 .WithUrlPrefix($"http://*:{port}")
                 .WithMode(HttpListenerMode.EmbedIO))
@@ -50,7 +53,10 @@ namespace TouchNStars.Server {
                 .WithController<FramingController>()     // Framing Assistant control
                 .WithController<MetricsController>()     // System metrics
                 .WithController<UtilityController>()    // Logs, version, api-port
-                .WithController<BahtinovController>());  // Bahtinov mask analysis
+                .WithController<BahtinovController>()    // Bahtinov mask analysis
+                .WithController<INDIController>()        // INDI driver management
+                .WithController<HocusFocusController>()  // HocusFocus plugin integration
+                .WithController<PinsController>());      // PINS device management
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 

@@ -1,24 +1,31 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFrameworks>net10.0-windows;net10.0</TargetFrameworks>
     <OutputType>Library</OutputType>
     <RootNamespace>TouchNStars</RootNamespace>
     <AssemblyName>TouchNStars</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <UseWPF>true</UseWPF>
-    <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">true</UseWPF>
+    <ImportWindowsDesktopTargets Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">true</ImportWindowsDesktopTargets>
+    <EnableWindowsTargeting Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">true</EnableWindowsTargeting>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Workaround for ToastNotifications localization issue on German systems -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <DefaultItemExcludes Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">$(DefaultItemExcludes);**/*.xaml.cs;**/*.xaml</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="EmbedIO" Version="3.5.2" />
     <PackageReference Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
     <PackageReference Include="Makaretu.Dns.New" Version="3.1.2" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="NINA.Plugin" Version="3.1.2.9001" />
-    <PackageReference Include="NINA.WPF.Base" Version="3.1.2.9001" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))" Include="NINA.Plugin" Version="3.1.2.9001" />
+    <PackageReference Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))" Include="NINA.WPF.Base" Version="3.1.2.9001" />
+  </ItemGroup>
+  <ItemGroup Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">
+    <ProjectReference Include="..\..\..\NINA.Plugin\NINA.Plugin.csproj" />
+    <ProjectReference Include="..\..\..\System.Windows.Compat\System.Windows.Compat.csproj" />
+    <PackageReference Include="System.Drawing.Common" Version="*" ExcludeAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="Properties\Settings.Designer.cs">
@@ -34,7 +41,17 @@
     </None>
   </ItemGroup>
   <PropertyGroup />
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">
     <Exec Command="&#xD;&#xA;if not exist &quot;%25localappdata%25\NINA\Plugins\3.0.0&quot; (&#xD;&#xA;  echo &quot;Creating $(PlatformName) Plugins folder&quot;&#xD;&#xA;  mkdir &quot;%25localappdata%25\NINA\Plugins\3.0.0&quot;&#xD;&#xA;)&#xD;&#xA;if not exist &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot; (&#xD;&#xA;  echo &quot;Creating $(PlatformName) Plugins Touch 'N' Stars folder&quot;&#xD;&#xA;  mkdir &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot;&#xD;&#xA;)&#xD;&#xA;&#xD;&#xA;echo &quot;Copying $(PlatformName) $(TargetFileName)&quot;&#xD;&#xA;xcopy &quot;$(TargetPath)&quot; &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot; /h/i/c/k/e/r/y&#xD;&#xA;  " />
+  </Target>
+  <Target Name="PostBuildLinux" AfterTargets="PostBuildEvent" Condition="$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">
+    <Exec Command="mkdir -p $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars" />
+    <Exec Command="cp $(TargetPath) $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)Common.Logging.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)Common.Logging.Core.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)EmbedIO.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)Makaretu.Dns.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)Makaretu.Dns.Multicast.New.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
+    <Exec Command="cp $(TargetDir)Swan.Lite.dll $HOME/.local/share/NINA/Plugins/3.0.0/Touch\ N\ Stars/" />
   </Target>
 </Project>
