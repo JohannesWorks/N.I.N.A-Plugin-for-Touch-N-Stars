@@ -2,7 +2,6 @@ using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
-using PHD2.SHMGuider;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -2501,7 +2500,7 @@ public class PHD2Controller : WebApiController
     }
 
     /// <summary>
-    /// GET /api/phd2/camera/list - Get list of available cameras from PHD2 SHM
+    /// GET /api/phd2/camera/list - Get list of available cameras from PHD2
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/camera/list")]
     public async Task<ApiResponse> GetAvailableCameras()
@@ -2521,9 +2520,8 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            var shmService = new PHD2SHMService();
-            var cameras = shmService.GetCameraList();
-            var selectedIndex = shmService.GetSelectedCameraIndex();
+            var cameras = await phd2Service.GetCameraListAsync();
+            var selected = await phd2Service.GetSelectedCameraIdAsync();
 
             return new ApiResponse
             {
@@ -2532,7 +2530,7 @@ public class PHD2Controller : WebApiController
                 {
                     Cameras = cameras,
                     Count = cameras.Count,
-                    SelectedIndex = selectedIndex >= 0 ? selectedIndex : -1
+                    Selected = selected
                 },
                 StatusCode = 200,
                 Type = "PHD2Cameras"
@@ -2578,28 +2576,25 @@ public class PHD2Controller : WebApiController
             // Handle PUT request (update)
             if (HttpContext.Request.HttpMethod == "PUT")
             {
-                uint cameraIndex = 0;
+                string cameraId = null;
 
                 try
                 {
                     var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                    if (requestData != null && requestData.ContainsKey("index"))
+                    if (requestData != null && requestData.ContainsKey("cameraId"))
                     {
-                        if (uint.TryParse(requestData["index"].ToString(), out uint index))
+                        cameraId = requestData["cameraId"].ToString();
+                    }
+                    else
+                    {
+                        HttpContext.Response.StatusCode = 400;
+                        return new ApiResponse
                         {
-                            cameraIndex = index;
-                        }
-                        else
-                        {
-                            HttpContext.Response.StatusCode = 400;
-                            return new ApiResponse
-                            {
-                                Success = false,
-                                Error = "Invalid index format",
-                                StatusCode = 400,
-                                Type = "Error"
-                            };
-                        }
+                            Success = false,
+                            Error = "Missing cameraId parameter",
+                            StatusCode = 400,
+                            Type = "Error"
+                        };
                     }
                 }
                 catch
@@ -2614,30 +2609,28 @@ public class PHD2Controller : WebApiController
                     };
                 }
 
-                var shmService = new PHD2SHMService();
-                var cameras = shmService.GetCameraList();
+                var instances = await phd2Service.GetCameraInstancesAsync();
 
-                if (cameraIndex >= cameras.Count)
+                if (!instances.Contains(cameraId))
                 {
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse
                     {
                         Success = false,
-                        Error = "Camera index out of range",
+                        Error = "Camera ID not found",
                         StatusCode = 400,
                         Type = "Error"
                     };
                 }
 
-                bool result = shmService.SetSelectedCameraIndex((int)cameraIndex);
+                bool result = await phd2Service.SetSelectedCameraAsync(cameraId);
 
                 return new ApiResponse
                 {
                     Success = result,
                     Response = new
                     {
-                        Index = cameraIndex,
-                        Name = cameras[(int)cameraIndex],
+                        CameraId = cameraId,
                         Changed = result
                     },
                     StatusCode = result ? 200 : 500,
@@ -2647,11 +2640,9 @@ public class PHD2Controller : WebApiController
             // Handle GET request (retrieve)
             else
             {
-                var shmService = new PHD2SHMService();
-                var cameras = shmService.GetCameraList();
-                var selectedIndex = shmService.GetSelectedCameraIndex();
+                var selectedId = await phd2Service.GetSelectedCameraIdAsync();
 
-                if (selectedIndex < 0 || selectedIndex >= cameras.Count)
+                if (string.IsNullOrEmpty(selectedId))
                 {
                     HttpContext.Response.StatusCode = 404;
                     return new ApiResponse
@@ -2668,8 +2659,7 @@ public class PHD2Controller : WebApiController
                     Success = true,
                     Response = new
                     {
-                        Index = selectedIndex,
-                        Name = cameras[selectedIndex]
+                        CameraId = selectedId
                     },
                     StatusCode = 200,
                     Type = "PHD2SelectedCamera"
@@ -2711,8 +2701,7 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            var shmService = new PHD2SHMService();
-            var instances = shmService.GetCameraInstances();
+            var instances = await phd2Service.GetCameraInstancesAsync();
 
             return new ApiResponse
             {
@@ -2800,8 +2789,7 @@ public class PHD2Controller : WebApiController
                     };
                 }
 
-                var shmService = new PHD2SHMService();
-                bool result = shmService.SetSelectedCameraInstanceId(instanceId);
+                bool result = await phd2Service.SetSelectedCameraAsync(instanceId);
 
                 return new ApiResponse
                 {
@@ -2818,8 +2806,7 @@ public class PHD2Controller : WebApiController
             // Handle GET request
             else
             {
-                var shmService = new PHD2SHMService();
-                var selectedInstance = shmService.GetSelectedCameraInstance();
+                var selectedInstance = await phd2Service.GetSelectedCameraIdAsync();
 
                 if (selectedInstance == null)
                 {
@@ -2857,7 +2844,52 @@ public class PHD2Controller : WebApiController
     }
 
     /// <summary>
-    /// GET /api/phd2/mount/list - Get list of available mounts from PHD2 SHM
+    /// GET /api/phd2/camera/ids - Get all camera IDs grouped by camera name from PHD2
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/ids")]
+    public async Task<ApiResponse> GetAllCameraIds()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var cameraIds = await phd2Service.GetAllCameraIdsAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = cameraIds,
+                StatusCode = 200,
+                Type = "PHD2CameraIds"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/mount/list - Get list of available mounts from PHD2
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/mount/list")]
     public async Task<ApiResponse> GetAvailableMounts()
@@ -2877,9 +2909,8 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            var shmService = new PHD2SHMService();
-            var mounts = shmService.GetMountList();
-            var selectedIndex = shmService.GetSelectedMountIndex();
+            var mounts = await phd2Service.GetMountListAsync();
+            var selected = await phd2Service.GetSelectedMountAsync();
 
             return new ApiResponse
             {
@@ -2888,7 +2919,7 @@ public class PHD2Controller : WebApiController
                 {
                     Mounts = mounts,
                     Count = mounts.Count,
-                    SelectedIndex = selectedIndex >= 0 ? selectedIndex : -1
+                    Selected = selected
                 },
                 StatusCode = 200,
                 Type = "PHD2Mounts"
@@ -2934,28 +2965,25 @@ public class PHD2Controller : WebApiController
             // Handle PUT request (update)
             if (HttpContext.Request.HttpMethod == "PUT")
             {
-                uint mountIndex = 0;
+                string mountId = null;
 
                 try
                 {
                     var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                    if (requestData != null && requestData.ContainsKey("index"))
+                    if (requestData != null && requestData.ContainsKey("mountId"))
                     {
-                        if (uint.TryParse(requestData["index"].ToString(), out uint index))
+                        mountId = requestData["mountId"].ToString();
+                    }
+                    else
+                    {
+                        HttpContext.Response.StatusCode = 400;
+                        return new ApiResponse
                         {
-                            mountIndex = index;
-                        }
-                        else
-                        {
-                            HttpContext.Response.StatusCode = 400;
-                            return new ApiResponse
-                            {
-                                Success = false,
-                                Error = "Invalid index format",
-                                StatusCode = 400,
-                                Type = "Error"
-                            };
-                        }
+                            Success = false,
+                            Error = "Missing mountId parameter",
+                            StatusCode = 400,
+                            Type = "Error"
+                        };
                     }
                 }
                 catch
@@ -2970,30 +2998,28 @@ public class PHD2Controller : WebApiController
                     };
                 }
 
-                var shmService = new PHD2SHMService();
-                var mounts = shmService.GetMountList();
+                var mounts = await phd2Service.GetMountListAsync();
 
-                if (mountIndex >= mounts.Count)
+                if (!mounts.Contains(mountId))
                 {
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse
                     {
                         Success = false,
-                        Error = "Mount index out of range",
+                        Error = "Mount ID not found",
                         StatusCode = 400,
                         Type = "Error"
                     };
                 }
 
-                bool result = shmService.SetSelectedMountIndex((int)mountIndex);
+                bool result = await phd2Service.SetSelectedMountAsync(mountId);
 
                 return new ApiResponse
                 {
                     Success = result,
                     Response = new
                     {
-                        Index = mountIndex,
-                        Name = mounts[(int)mountIndex],
+                        MountId = mountId,
                         Changed = result
                     },
                     StatusCode = result ? 200 : 500,
@@ -3003,11 +3029,9 @@ public class PHD2Controller : WebApiController
             // Handle GET request (retrieve)
             else
             {
-                var shmService = new PHD2SHMService();
-                var mounts = shmService.GetMountList();
-                var selectedIndex = shmService.GetSelectedMountIndex();
+                var selectedId = await phd2Service.GetSelectedMountAsync();
 
-                if (selectedIndex < 0 || selectedIndex >= mounts.Count)
+                if (string.IsNullOrEmpty(selectedId))
                 {
                     HttpContext.Response.StatusCode = 404;
                     return new ApiResponse
@@ -3024,8 +3048,7 @@ public class PHD2Controller : WebApiController
                     Success = true,
                     Response = new
                     {
-                        Index = selectedIndex,
-                        Name = mounts[selectedIndex]
+                        MountId = selectedId
                     },
                     StatusCode = 200,
                     Type = "PHD2SelectedMount"
@@ -3047,10 +3070,12 @@ public class PHD2Controller : WebApiController
     }
 
     /// <summary>
-    /// GET /api/phd2/camera/option/list - Get available camera configuration options for selected camera
+    /// GET /api/phd2/mount/indi-driver - Get the selected INDI mount driver from PHD2
+    /// PUT /api/phd2/mount/indi-driver - Update the selected INDI mount driver
     /// </summary>
-    [Route(HttpVerbs.Get, "/phd2/camera/option/list")]
-    public async Task<ApiResponse> GetCameraOptions()
+    [Route(HttpVerbs.Get, "/phd2/mount/indi-driver")]
+    [Route(HttpVerbs.Put, "/phd2/mount/indi-driver")]
+    public async Task<ApiResponse> SelectedINDIMountDriver()
     {
         try
         {
@@ -3067,213 +3092,96 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            var shmService = new PHD2SHMService();
-            var options = shmService.GetCameraOptions();
-
-            return new ApiResponse
+            // Handle PUT request (update)
+            if (HttpContext.Request.HttpMethod == "PUT")
             {
-                Success = true,
-                Response = new
+                string driverName = null;
+
+                try
                 {
-                    Options = options,
-                    Count = options.Count
-                },
-                StatusCode = 200,
-                Type = "PHD2CameraOptions"
-            };
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex);
-            HttpContext.Response.StatusCode = 500;
-            return new ApiResponse
-            {
-                Success = false,
-                Error = ex.Message,
-                StatusCode = 500,
-                Type = "Error"
-            };
-        }
-    }
+                    var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+                    if (requestData != null && requestData.ContainsKey("driverName"))
+                    {
+                        driverName = requestData["driverName"].ToString();
+                    }
+                    else
+                    {
+                        HttpContext.Response.StatusCode = 400;
+                        return new ApiResponse
+                        {
+                            Success = false,
+                            Error = "Missing driverName parameter",
+                            StatusCode = 400,
+                            Type = "Error"
+                        };
+                    }
+                }
+                catch
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Failed to parse request",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
 
-    /// <summary>
-    /// GET /api/phd2/camera/option - Get a camera option value
-    /// </summary>
-    [Route(HttpVerbs.Get, "/phd2/camera/option")]
-    public async Task<ApiResponse> GetCameraOption([QueryField(true)] string name)
-    {
-        try
-        {
-            EnsurePHD2ServicesInitialized();
-            // Check if PHD2 is connected first
-            if (!phd2Service.IsConnected)
-            {
+                if (string.IsNullOrEmpty(driverName))
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Driver name cannot be empty",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                bool result = await phd2Service.SetSelectedINDIMountDriverAsync(driverName);
+
                 return new ApiResponse
                 {
-                    Success = false,
-                    Error = "PHD2 is not connected",
-                    StatusCode = 400,
-                    Type = "PHD2NotConnected"
+                    Success = result,
+                    Response = new
+                    {
+                        DriverName = driverName,
+                        Changed = result
+                    },
+                    StatusCode = result ? 200 : 500,
+                    Type = "PHD2INDIMountDriver"
                 };
             }
-
-            if (string.IsNullOrEmpty(name))
+            // Handle GET request
+            else
             {
-                HttpContext.Response.StatusCode = 400;
+                var driverName = await phd2Service.GetSelectedINDIMountDriverAsync();
+
+                if (string.IsNullOrEmpty(driverName))
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "No INDI mount driver selected",
+                        StatusCode = 404,
+                        Type = "Error"
+                    };
+                }
+
                 return new ApiResponse
                 {
-                    Success = false,
-                    Error = "Option name is required",
-                    StatusCode = 400,
-                    Type = "Error"
+                    Success = true,
+                    Response = new
+                    {
+                        DriverName = driverName
+                    },
+                    StatusCode = 200,
+                    Type = "PHD2INDIMountDriver"
                 };
             }
-
-            var shmService = new PHD2SHMService();
-            var allOptions = shmService.GetCameraOptions();
-
-            // Check if selected camera has any options
-            if (allOptions.Count == 0)
-            {
-                HttpContext.Response.StatusCode = 404;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "Selected camera has no configurable options",
-                    StatusCode = 404,
-                    Type = "NoOptionsAvailable"
-                };
-            }
-
-            var value = shmService.GetCameraOptionValue(name);
-
-            if (value == null)
-            {
-                HttpContext.Response.StatusCode = 404;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = $"Camera option '{name}' not found",
-                    StatusCode = 404,
-                    Type = "Error"
-                };
-            }
-
-            return new ApiResponse
-            {
-                Success = true,
-                Response = new
-                {
-                    Name = name,
-                    Value = value
-                },
-                StatusCode = 200,
-                Type = "PHD2CameraOption"
-            };
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex);
-            HttpContext.Response.StatusCode = 500;
-            return new ApiResponse
-            {
-                Success = false,
-                Error = ex.Message,
-                StatusCode = 500,
-                Type = "Error"
-            };
-        }
-    }
-
-    /// <summary>
-    /// PUT /api/phd2/camera/option - Set a camera option value
-    /// </summary>
-    [Route(HttpVerbs.Put, "/phd2/camera/option")]
-    public async Task<ApiResponse> SetCameraOption()
-    {
-        try
-        {
-            EnsurePHD2ServicesInitialized();
-            // Check if PHD2 is connected first
-            if (!phd2Service.IsConnected)
-            {
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "PHD2 is not connected",
-                    StatusCode = 400,
-                    Type = "PHD2NotConnected"
-                };
-            }
-
-            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("name") || !requestData.ContainsKey("value"))
-            {
-                HttpContext.Response.StatusCode = 400;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "name and value parameters are required",
-                    StatusCode = 400,
-                    Type = "Error"
-                };
-            }
-
-            string optionName = requestData["name"]?.ToString();
-            if (string.IsNullOrEmpty(optionName))
-            {
-                HttpContext.Response.StatusCode = 400;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "Option name cannot be empty",
-                    StatusCode = 400,
-                    Type = "Error"
-                };
-            }
-
-            if (!int.TryParse(requestData["value"].ToString(), out int optionValue))
-            {
-                HttpContext.Response.StatusCode = 400;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "Option value must be a valid integer",
-                    StatusCode = 400,
-                    Type = "Error"
-                };
-            }
-
-            var shmService = new PHD2SHMService();
-            var allOptions = shmService.GetCameraOptions();
-
-            // Check if selected camera has any options
-            if (allOptions.Count == 0)
-            {
-                HttpContext.Response.StatusCode = 404;
-                return new ApiResponse
-                {
-                    Success = false,
-                    Error = "Selected camera has no configurable options",
-                    StatusCode = 404,
-                    Type = "NoOptionsAvailable"
-                };
-            }
-
-            bool result = shmService.SetCameraOptionValue(optionName, optionValue.ToString());
-
-            return new ApiResponse
-            {
-                Success = result,
-                Response = new
-                {
-                    Name = optionName,
-                    Value = optionValue,
-                    Changed = result
-                },
-                StatusCode = result ? 200 : 500,
-                Type = "PHD2CameraOption"
-            };
         }
         catch (Exception ex)
         {
