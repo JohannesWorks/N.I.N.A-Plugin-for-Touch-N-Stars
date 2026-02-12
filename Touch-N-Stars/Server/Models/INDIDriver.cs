@@ -123,6 +123,7 @@ public static class INDIFlatPanelDrivers
 {
     public static readonly List<INDIDriver> Drivers = new()
     {
+        new INDIDriver { Name = "indi_deepskydata_fp", Label = "DeepSkyDad Flat Panel", Type = "flatpanel" },
         new INDIDriver { Name = "indi_gemini_flatpanel", Label = "Gemini Flat Panel", Type = "flatpanel" },
         new INDIDriver { Name = "indi_simulator_lightpanel", Label = "Simulator Light Panel", Type = "flatpanel" },
         new INDIDriver { Name = "indi_wanderer_cover", Label = "Wanderer Cover", Type = "flatpanel" },
