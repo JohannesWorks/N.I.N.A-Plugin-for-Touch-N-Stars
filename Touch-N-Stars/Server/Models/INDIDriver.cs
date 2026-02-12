@@ -29,7 +29,6 @@ public static class INDIFocusDrivers
         new INDIDriver { Name = "indi_moonlite_focus", Label = "Moonlite Focuser", Type = "focuser" },
         new INDIDriver { Name = "indi_moonlitedro_focus", Label = "Moonlite DRO Focuser", Type = "focuser" },
         new INDIDriver { Name = "indi_myfocuserpro2_focus", Label = "MyFocuserPro2 Focuser", Type = "focuser" },
-        new INDIDriver { Name = "indi_nightcrawler_focus", Label = "Nightcrawler Focuser", Type = "focuser" },
         new INDIDriver { Name = "indi_pegasus_focuscube", Label = "Pegasus FocusCube", Type = "focuser" },
         new INDIDriver { Name = "indi_pegasus_focuscube3", Label = "Pegasus FocusCube 3", Type = "focuser" },
         new INDIDriver { Name = "indi_qhy_focuser", Label = "QHY Focuser", Type = "focuser" },
@@ -49,9 +48,6 @@ public static class INDIRotatorDrivers
         new INDIDriver { Name = "indi_falcon_rotator", Label = "Falcon Rotator", Type = "rotator" },
         new INDIDriver { Name = "indi_falconv2_rotator", Label = "Falcon v2 Rotator", Type = "rotator" },
         new INDIDriver { Name = "indi_simulator_rotator", Label = "Simulator Rotator", Type = "rotator" },
-        new INDIDriver { Name = "indi_wanderer_lite_rotator", Label = "Wanderer Lite Rotator", Type = "rotator" },
-        new INDIDriver { Name = "indi_wanderer_rotator_lite_v2", Label = "Wanderer Rotator Lite v2", Type = "rotator" },
-        new INDIDriver { Name = "indi_wanderer_rotator_mini", Label = "Wanderer Rotator Mini", Type = "rotator" },
     };
 }
 
@@ -59,10 +55,8 @@ public static class INDIFilterWheelDrivers
 {
     public static readonly List<INDIDriver> Drivers = new()
     {
-        new INDIDriver { Name = "indi_oasis_filter_wheel", Label = "Oasis Filter Wheel", Type = "filterwheel" },
         new INDIDriver { Name = "indi_pegasusindigo_wheel", Label = "Pegasus Indigo Filter Wheel", Type = "filterwheel" },
         new INDIDriver { Name = "indi_simulator_wheel", Label = "Simulator Filter Wheel", Type = "filterwheel" },
-        new INDIDriver { Name = "indi_toupcam_wheel", Label = "TOUPTEK Cam Filter Wheel", Type = "filterwheel" },
     };
 }
 
@@ -127,7 +121,5 @@ public static class INDIFlatPanelDrivers
         new INDIDriver { Name = "indi_gemini_flatpanel", Label = "Gemini Flat Panel", Type = "flatpanel" },
         new INDIDriver { Name = "indi_simulator_lightpanel", Label = "Simulator Light Panel", Type = "flatpanel" },
         new INDIDriver { Name = "indi_wanderer_cover", Label = "Wanderer Cover", Type = "flatpanel" },
-        new INDIDriver { Name = "indi_wanderercover_v4_ec", Label = "Wanderer Cover v4 EC", Type = "flatpanel" },
-        new INDIDriver { Name = "indi_wanderercover_v4_pro_ec", Label = "Wanderer Cover v4 Pro EC", Type = "flatpanel" },
     };
 }
