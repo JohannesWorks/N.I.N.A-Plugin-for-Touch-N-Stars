@@ -3146,7 +3146,7 @@ namespace TouchNStars.Server.Services
                 }
             });
         }
-        public async Task<Dictionary<string, List<string>>> GetAllCameraIdsAsync()
+        public async Task<Dictionary<string, List<CameraInfo>>> GetAllCameraIdsAsync()
         {
             return await Task.Run(() =>
             {
@@ -3166,7 +3166,7 @@ namespace TouchNStars.Server.Services
                 {
                     lastError = ex.Message;
                     Logger.Error($"Failed to get all camera IDs: {ex}");
-                    return new Dictionary<string, List<string>>();
+                    return new Dictionary<string, List<CameraInfo>>();
                 }
             });
         }

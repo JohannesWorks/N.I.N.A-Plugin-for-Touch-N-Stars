@@ -99,6 +99,12 @@ namespace TouchNStars.PHD2
         public string Pixels { get; set; } // Base64 encoded 16-bit pixel data
     }
 
+    public class CameraInfo
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+    }
+
     internal class PHD2Connection : IDisposable
     {
         private TcpClient tcpClient;
@@ -645,25 +651,33 @@ namespace TouchNStars.PHD2
             return profiles;
         }
 
-        public Dictionary<string, List<string>> GetAllCameraIds()
+        public Dictionary<string, List<CameraInfo>> GetAllCameraIds()
         {
             CheckConnected();
             var result = Call("get_all_camera_ids");
-            var cameraIds = new Dictionary<string, List<string>>();
+            var cameraIds = new Dictionary<string, List<CameraInfo>>();
 
             if (result["result"] is JObject resultObj)
             {
                 foreach (var property in resultObj.Properties())
                 {
                     var cameraName = property.Name;
-                    var ids = new List<string>();
+                    var cameras = new List<CameraInfo>();
 
-                    foreach (var id in property.Value.Values<string>())
+                    foreach (var cameraData in property.Value)
                     {
-                        ids.Add(id);
+                        if (cameraData is JObject cameraObj)
+                        {
+                            var cameraInfo = new CameraInfo
+                            {
+                                Id = (string)cameraObj["id"],
+                                Name = (string)cameraObj["name"]
+                            };
+                            cameras.Add(cameraInfo);
+                        }
                     }
 
-                    cameraIds[cameraName] = ids;
+                    cameraIds[cameraName] = cameras;
                 }
             }
 
