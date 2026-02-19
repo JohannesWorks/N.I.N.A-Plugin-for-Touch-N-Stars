@@ -13,6 +13,7 @@ public class PowerBoxInfo
     public string DriverVersion { get; set; }
     public string UpTimeFormatted { get; set; }
     public bool Connected { get; set; }
+    public double CoreTemp { get; set; }
     public double Temperature { get; set; }
     public double Humidity { get; set; }
     public double DewPoint { get; set; }
@@ -24,6 +25,7 @@ public class PowerBoxInfo
     public double TemperatureOffset { get; set; }
     public double HumidityOffset { get; set; }
     public bool ExtSensor { get; set; }
+    public bool HasWifi { get; set; }
     public PowerSupplyInfo PowerSupply { get; set; }
     public PowerPortsInfo PowerPorts { get; set; }
     public PowerPortsInfo USBPorts { get; set; }
@@ -91,9 +93,11 @@ public class DewPortInfo
     public bool Enabled { get; set; }
     public int Resolution { get; set; }
     public int PowerLevel { get; set; }
+    public int SetPower { get; set; }
     public bool AutoMode { get; set; }
     public double AutoThreshold { get; set; }
     public double Probe { get; set; }
+    public bool Overcurrent { get; set; }
 }
 
 /// <summary>
@@ -118,6 +122,7 @@ public class BuckPortInfo
     public bool Enabled { get; set; }
     public double MaxVoltage { get; set; }
     public double MinVoltage { get; set; }
+    public bool Overcurrent { get; set; }
 }
 
 /// <summary>
@@ -141,6 +146,7 @@ public class PWMPortInfo
     public double Current { get; set; }
     public bool Enabled { get; set; }
     public int Resolution { get; set; }
+    public bool Overcurrent { get; set; }
 }
 
 /// <summary>

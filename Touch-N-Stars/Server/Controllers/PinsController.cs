@@ -191,6 +191,13 @@ public class PinsController : WebApiController
                 };
             }
 
+            // Get actual port counts reported by the device
+            int powerPortCount = GetPropertyInt(powerBox, "ActualPowerPortCount", 8);
+            int usbPortCount = GetPropertyInt(powerBox, "ActualUSBPortCount", 8);
+            int dewPortCount = GetPropertyInt(powerBox, "ActualDewPortCount", 2);
+            int buckPortCount = GetPropertyInt(powerBox, "ActualBuckPortCount", 1);
+            int pwmPortCount = GetPropertyInt(powerBox, "ActualPWMPortCount", 1);
+
             var info = new
             {
                 Name = GetPropertyValue(powerBox, "Name", ""),
@@ -201,11 +208,11 @@ public class PinsController : WebApiController
                 DriverVersion = GetPropertyValue(powerBox, "DriverVersion", ""),
                 Firmware = GetPropertyValue(powerBox, "Firmware", ""),
                 Connected = GetPropertyBool(powerBox, "Connected"),
-                PowerPorts = 6,
-                USBPorts = 6,
-                DewPorts = 2,
-                BuckPorts = 1,
-                PWMPorts = 1
+                PowerPorts = powerPortCount,
+                USBPorts = usbPortCount,
+                DewPorts = dewPortCount,
+                BuckPorts = buckPortCount,
+                PWMPorts = pwmPortCount
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -255,11 +262,13 @@ public class PinsController : WebApiController
             var status = new
             {
                 // Environment
+                CoreTemp = GetPropertyDouble(powerBox, "CoreTemp"),
                 Temperature = GetPropertyDouble(powerBox, "Temperature"),
                 Humidity = GetPropertyDouble(powerBox, "Humidity"),
                 DewPoint = GetPropertyDouble(powerBox, "DewPoint"),
                 UpTime = GetPropertyValue(powerBox, "UpTimeFormatted", ""),
                 ExtSensor = GetPropertyBool(powerBox, "ExtSensor"),
+                HasWifi = GetPropertyBool(powerBox, "HasWifi"),
                 EnvUpdateRate = GetPropertyInt(powerBox, "EnvUpdateRate"),
                 TemperatureOffset = GetPropertyDouble(powerBox, "TemperatureOffset"),
                 HumidityOffset = GetPropertyDouble(powerBox, "HumidityOffset"),
@@ -271,7 +280,7 @@ public class PinsController : WebApiController
                 Rail5V = GetPropertyDouble(GetPropertyObject(powerBox, "PowerSupply"), "Supply5V"),
                 Rail5A = GetPropertyDouble(powerBox, "Supply5A"),
                 Rail5W = GetPropertyDouble(powerBox, "Supply5W"),
-                AverageAmps = GetPropertyDouble(powerBox, "AverageAmps"),
+                AverageAmps = GetPropertyDouble(GetPropertyObject(powerBox, "PowerSupply"), "AverageAmps"),
                 AmpsPerHour = GetPropertyDouble(GetPropertyObject(powerBox, "PowerSupply"), "AmpsPerHour"),
                 WattsPerHour = GetPropertyDouble(GetPropertyObject(powerBox, "PowerSupply"), "WattsPerHour"),
                 UpdateRate = GetPropertyInt(powerBox, "UpdateRate")
@@ -1398,9 +1407,11 @@ public class PinsController : WebApiController
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 Resolution = GetPropertyInt(targetPort, "Resolution"),
                 PowerLevel = GetPropertyInt(targetPort, "Power"),
+                SetPower = GetPropertyInt(targetPort, "SetPower"),
                 AutoMode = GetPropertyBool(targetPort, "AutoMode"),
                 AutoThreshold = GetPropertyDouble(targetPort, "AutoThreshold"),
-                Probe = GetPropertyDouble(targetPort, "Probe")
+                Probe = GetPropertyDouble(targetPort, "Probe"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -1537,9 +1548,11 @@ public class PinsController : WebApiController
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 Resolution = GetPropertyInt(targetPort, "Resolution"),
                 PowerLevel = GetPropertyInt(targetPort, "Power"),
+                SetPower = GetPropertyInt(targetPort, "SetPower"),
                 AutoMode = GetPropertyBool(targetPort, "AutoMode"),
                 AutoThreshold = GetPropertyDouble(targetPort, "AutoThreshold"),
-                Probe = GetPropertyDouble(targetPort, "Probe")
+                Probe = GetPropertyDouble(targetPort, "Probe"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -1664,9 +1677,11 @@ public class PinsController : WebApiController
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 Resolution = GetPropertyInt(targetPort, "Resolution"),
                 PowerLevel = GetPropertyInt(targetPort, "Power"),
+                SetPower = GetPropertyInt(targetPort, "SetPower"),
                 AutoMode = GetPropertyBool(targetPort, "AutoMode"),
                 AutoThreshold = GetPropertyDouble(targetPort, "AutoThreshold"),
-                Probe = GetPropertyDouble(targetPort, "Probe")
+                Probe = GetPropertyDouble(targetPort, "Probe"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -1791,9 +1806,11 @@ public class PinsController : WebApiController
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 Resolution = GetPropertyInt(targetPort, "Resolution"),
                 PowerLevel = GetPropertyInt(targetPort, "Power"),
+                SetPower = GetPropertyInt(targetPort, "SetPower"),
                 AutoMode = GetPropertyBool(targetPort, "AutoMode"),
                 AutoThreshold = GetPropertyDouble(targetPort, "AutoThreshold"),
-                Probe = GetPropertyDouble(targetPort, "Probe")
+                Probe = GetPropertyDouble(targetPort, "Probe"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -1932,9 +1949,11 @@ public class PinsController : WebApiController
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 Resolution = GetPropertyInt(targetPort, "Resolution"),
                 PowerLevel = GetPropertyInt(targetPort, "Power"),
+                SetPower = GetPropertyInt(targetPort, "SetPower"),
                 AutoMode = GetPropertyBool(targetPort, "AutoMode"),
                 AutoThreshold = GetPropertyDouble(targetPort, "AutoThreshold"),
-                Probe = GetPropertyDouble(targetPort, "Probe")
+                Probe = GetPropertyDouble(targetPort, "Probe"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2115,7 +2134,8 @@ public class PinsController : WebApiController
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 MaxVoltage = GetPropertyDouble(targetPort, "MaxVoltage"),
-                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage")
+                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2249,7 +2269,8 @@ public class PinsController : WebApiController
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 MaxVoltage = GetPropertyDouble(targetPort, "MaxVoltage"),
-                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage")
+                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2371,7 +2392,8 @@ public class PinsController : WebApiController
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 MaxVoltage = GetPropertyDouble(targetPort, "MaxVoltage"),
-                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage")
+                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2509,7 +2531,8 @@ public class PinsController : WebApiController
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
                 MaxVoltage = GetPropertyDouble(targetPort, "MaxVoltage"),
-                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage")
+                MinVoltage = GetPropertyDouble(targetPort, "MinVoltage"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2689,7 +2712,8 @@ public class PinsController : WebApiController
                 SetPower = GetPropertyInt(targetPort, "SetPower"),
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
-                Resolution = GetPropertyInt(targetPort, "Resolution")
+                Resolution = GetPropertyInt(targetPort, "Resolution"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2822,7 +2846,8 @@ public class PinsController : WebApiController
                 SetPower = GetPropertyInt(targetPort, "SetPower"),
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
-                Resolution = GetPropertyInt(targetPort, "Resolution")
+                Resolution = GetPropertyInt(targetPort, "Resolution"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -2958,7 +2983,8 @@ public class PinsController : WebApiController
                 SetPower = GetPropertyInt(targetPort, "SetPower"),
                 Current = GetPropertyDouble(targetPort, "Current"),
                 Enabled = GetPropertyBool(targetPort, "Enabled"),
-                Resolution = GetPropertyInt(targetPort, "Resolution")
+                Resolution = GetPropertyInt(targetPort, "Resolution"),
+                Overcurrent = GetPropertyBool(targetPort, "Overcurrent")
             };
 
             HttpContext.Response.StatusCode = 200;
@@ -4040,9 +4066,11 @@ public class PinsController : WebApiController
                         Enabled = GetPropertyBool(port, "Enabled"),
                         Resolution = GetPropertyInt(port, "Resolution"),
                         PowerLevel = GetPropertyInt(port, "Power"),
+                        SetPower = GetPropertyInt(port, "SetPower"),
                         AutoMode = GetPropertyBool(port, "AutoMode"),
                         AutoThreshold = GetPropertyDouble(port, "AutoThreshold"),
-                        Probe = GetPropertyDouble(port, "Probe")
+                        Probe = GetPropertyDouble(port, "Probe"),
+                        Overcurrent = GetPropertyBool(port, "Overcurrent")
                     });
                 }
             }
@@ -4084,7 +4112,8 @@ public class PinsController : WebApiController
                         Current = GetPropertyDouble(port, "Current"),
                         Enabled = GetPropertyBool(port, "Enabled"),
                         MaxVoltage = GetPropertyDouble(port, "MaxVoltage"),
-                        MinVoltage = GetPropertyDouble(port, "MinVoltage")
+                        MinVoltage = GetPropertyDouble(port, "MinVoltage"),
+                        Overcurrent = GetPropertyBool(port, "Overcurrent")
                     });
                 }
             }
@@ -4125,7 +4154,8 @@ public class PinsController : WebApiController
                         SetPower = GetPropertyInt(port, "SetPower"),
                         Current = GetPropertyDouble(port, "Current"),
                         Enabled = GetPropertyBool(port, "Enabled"),
-                        Resolution = GetPropertyInt(port, "Resolution")
+                        Resolution = GetPropertyInt(port, "Resolution"),
+                        Overcurrent = GetPropertyBool(port, "Overcurrent")
                     });
                 }
             }
