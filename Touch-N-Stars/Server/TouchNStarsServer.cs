@@ -50,7 +50,8 @@ namespace TouchNStars.Server {
                 .WithController<FramingController>()     // Framing Assistant control
                 .WithController<MetricsController>()     // System metrics
                 .WithController<UtilityController>()    // Logs, version, api-port
-                .WithController<BahtinovController>());  // Bahtinov mask analysis
+                .WithController<BahtinovController>()    // Bahtinov mask analysis
+                .WithController<SequenceFilesController>()); // Save sequence files to NINA directory
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 
