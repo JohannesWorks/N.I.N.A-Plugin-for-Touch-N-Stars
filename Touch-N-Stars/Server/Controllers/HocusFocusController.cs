@@ -171,10 +171,10 @@ public class HocusFocusController : WebApiController
                 // Create a snapshot of the regions to avoid collection modification exceptions
                 var regionsSnapshot = regionsEnumerable.Cast<object>().ToList();
                 var curveFittingsSnapshot = (regionCurveFittingsValue is System.Collections.IEnumerable curvesEnum)
-                    ? curvesEnum.OfType<object>().ToList() 
+                    ? curvesEnum.OfType<object>().ToList()
                     : new List<object>();
                 var lineFittingsSnapshot = (regionLineFittingsValue is System.Collections.IEnumerable linesEnum)
-                    ? linesEnum.OfType<object>().ToList() 
+                    ? linesEnum.OfType<object>().ToList()
                     : new List<object>();
 
                 foreach (var region in regionsSnapshot)
@@ -205,7 +205,8 @@ public class HocusFocusController : WebApiController
                                 // Get min and max X values from focus points
                                 var minX = regionList.OfType<Dictionary<string, object>>()
                                     .Where(p => p.ContainsKey("X"))
-                                    .Select(p => {
+                                    .Select(p =>
+                                    {
                                         if (double.TryParse(p["X"].ToString(), out var x)) return x;
                                         return 0.0;
                                     })
@@ -213,7 +214,8 @@ public class HocusFocusController : WebApiController
                                     .Min();
                                 var maxX = regionList.OfType<Dictionary<string, object>>()
                                     .Where(p => p.ContainsKey("X"))
-                                    .Select(p => {
+                                    .Select(p =>
+                                    {
                                         if (double.TryParse(p["X"].ToString(), out var x)) return x;
                                         return 0.0;
                                     })
@@ -626,7 +628,7 @@ public class HocusFocusController : WebApiController
             // If afDirectory is provided, set it on the plugin so AnalyzeSavedAutoFocusRun can use it
             if (!string.IsNullOrEmpty(afDirectory))
             {
-                var selectedAFDirProperty = hocusFocusPluginType.GetProperty("SelectedAFDirectory", 
+                var selectedAFDirProperty = hocusFocusPluginType.GetProperty("SelectedAFDirectory",
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
 
                 if (selectedAFDirProperty != null && selectedAFDirProperty.CanWrite)
@@ -966,11 +968,11 @@ public class HocusFocusController : WebApiController
                                 }
                             }
                         }
-                        
+
                         // Reset the nextHistoryId counter so history IDs start from 1 again
                         try
                         {
-                            var nextHistoryIdField = tiltModelType.GetField("nextHistoryId", 
+                            var nextHistoryIdField = tiltModelType.GetField("nextHistoryId",
                                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                             if (nextHistoryIdField != null)
                             {
@@ -1027,7 +1029,7 @@ public class HocusFocusController : WebApiController
                 };
             }
 
-            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions", 
+            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (autoFocusOptionsProperty == null)
             {
@@ -1141,7 +1143,7 @@ public class HocusFocusController : WebApiController
                 };
             }
 
-            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions", 
+            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (autoFocusOptionsProperty == null)
             {
@@ -1235,7 +1237,7 @@ public class HocusFocusController : WebApiController
                 return new { Success = false, Error = "HocusFocus plugin not loaded" };
             }
 
-            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions", 
+            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (autoFocusOptionsProperty == null)
             {
@@ -1300,7 +1302,7 @@ public class HocusFocusController : WebApiController
                         convertedValue = Convert.ToBoolean(newValue);
                     }
                 }
-                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) || 
+                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) ||
                          targetType == typeof(decimal) || targetType == typeof(long) || targetType == typeof(short) ||
                          targetType == typeof(uint) || targetType == typeof(ulong) || targetType == typeof(ushort))
                 {
@@ -1375,7 +1377,7 @@ public class HocusFocusController : WebApiController
                 return new { Success = false, Error = "HocusFocus plugin not loaded" };
             }
 
-            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions", 
+            var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (autoFocusOptionsProperty == null)
             {
@@ -1391,7 +1393,7 @@ public class HocusFocusController : WebApiController
             }
 
             // Call ResetDefaults method
-            var resetMethod = autoFocusOptions.GetType().GetMethod("ResetDefaults", 
+            var resetMethod = autoFocusOptions.GetType().GetMethod("ResetDefaults",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
 
             if (resetMethod == null)
@@ -2016,7 +2018,7 @@ public class HocusFocusController : WebApiController
                 else if (targetType.IsEnum)
                 {
                     string enumStringValue = null;
-                    
+
                     if (newValue is JsonElement jelem)
                     {
                         enumStringValue = jelem.GetString();
@@ -2029,7 +2031,7 @@ public class HocusFocusController : WebApiController
                     {
                         enumStringValue = newValue.ToString();
                     }
-                    
+
                     Logger.Debug($"[StarDetection] Parsing enum {targetType.Name} from string: {enumStringValue}");
                     convertedValue = Enum.Parse(targetType, enumStringValue, ignoreCase: true);
                 }
@@ -2112,7 +2114,7 @@ public class HocusFocusController : WebApiController
                 };
             }
 
-            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (aberrationInspectorOptionsProperty == null)
             {
@@ -2206,7 +2208,7 @@ public class HocusFocusController : WebApiController
                 return new { Success = false, Error = "HocusFocus plugin not loaded" };
             }
 
-            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (aberrationInspectorOptionsProperty == null)
             {
@@ -2282,7 +2284,7 @@ public class HocusFocusController : WebApiController
                         convertedValue = Enum.Parse(targetType, newValue.ToString(), ignoreCase: true);
                     }
                 }
-                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) || 
+                else if (targetType == typeof(int) || targetType == typeof(double) || targetType == typeof(float) ||
                          targetType == typeof(decimal) || targetType == typeof(long) || targetType == typeof(short) ||
                          targetType == typeof(uint) || targetType == typeof(ulong) || targetType == typeof(ushort))
                 {
@@ -2357,7 +2359,7 @@ public class HocusFocusController : WebApiController
                 return new { Success = false, Error = "HocusFocus plugin not loaded" };
             }
 
-            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions", 
+            var aberrationInspectorOptionsProperty = hocusFocusPluginType.GetProperty("InspectorOptions",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             if (aberrationInspectorOptionsProperty == null)
             {
@@ -2373,7 +2375,7 @@ public class HocusFocusController : WebApiController
             }
 
             // Call ResetDefaults method
-            var resetMethod = aberrationInspectorOptions.GetType().GetMethod("ResetDefaults", 
+            var resetMethod = aberrationInspectorOptions.GetType().GetMethod("ResetDefaults",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
 
             if (resetMethod == null)
@@ -2402,5 +2404,132 @@ public class HocusFocusController : WebApiController
             HttpContext.Response.StatusCode = 500;
             return new { Success = false, Error = ex.Message };
         }
+    }
+
+    [Route(HttpVerbs.Get, "/hocusfocus/browse-directories")]
+    public object BrowseDirectories()
+    {
+        try
+        {
+            // Get the path query parameter (defaults to home directory or Documents)
+            string pathParam = null;
+            if (HttpContext.Request.QueryString.AllKeys.Contains("path"))
+            {
+                pathParam = HttpContext.Request.QueryString["path"]?.ToString();
+            }
+            var path = string.IsNullOrWhiteSpace(pathParam) ? GetDefaultBrowsePath() : Uri.UnescapeDataString(pathParam);
+
+            Logger.Debug($"[BrowseDirectories] Requested path: {pathParam}, resolved to: {path}");
+
+            // Security: Prevent path traversal attacks
+            var fullPath = Path.GetFullPath(path);
+            if (!Directory.Exists(fullPath))
+            {
+                Logger.Error($"[BrowseDirectories] Path does not exist: {fullPath}");
+                HttpContext.Response.StatusCode = 404;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "Path does not exist" }
+                };
+            }
+
+            // Get subdirectories
+            var subdirectories = new List<Dictionary<string, object>>();
+            try
+            {
+                // Get all directories and filter out hidden ones (starting with .)
+                var dirs = Directory.GetDirectories(fullPath)
+                    .Where(d => !Path.GetFileName(d).StartsWith("."))
+                    .OrderBy(d => Path.GetFileName(d))
+                    .ToList();
+                foreach (var dir in dirs)
+                {
+                    try
+                    {
+                        var dirInfo = new DirectoryInfo(dir);
+                        // Check if directory has non-hidden subdirectories
+                        var hasVisibleSubdirs = Directory.GetDirectories(dir)
+                            .Any(d => !Path.GetFileName(d).StartsWith("."));
+
+                        subdirectories.Add(new Dictionary<string, object>()
+                        {
+                            { "name", dirInfo.Name },
+                            { "path", dirInfo.FullName },
+                            { "hasSubdirs", hasVisibleSubdirs }
+                        });
+                    }
+                    catch { /* Skip directories we can't access */ }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "Access denied to this directory" }
+                };
+            }
+
+            // Get parent directory for navigation
+            var parentPath = Directory.GetParent(fullPath)?.FullName;
+
+            HttpContext.Response.StatusCode = 200;
+            return new Dictionary<string, object>()
+            {
+                { "Success", true },
+                { "currentPath", fullPath },
+                { "parentPath", parentPath },
+                { "directories", subdirectories }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[BrowseDirectories] Error browsing directories: {ex.Message}", ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>()
+            {
+                { "Success", false },
+                { "Error", $"Failed to browse directories: {ex.Message}" }
+            };
+        }
+    }
+
+    /// <summary>
+    /// Helper method to determine the default starting path for directory browsing
+    /// </summary>
+    private string GetDefaultBrowsePath()
+    {
+        try
+        {
+            // Try to get the AutoFocusOptions SavePath first
+            var hocusFocusPluginType = Type.GetType("NINA.Joko.Plugins.HocusFocus.HocusFocusPlugin, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusPluginType != null)
+            {
+                var autoFocusOptionsProperty = hocusFocusPluginType.GetProperty("AutoFocusOptions",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                if (autoFocusOptionsProperty != null)
+                {
+                    var autoFocusOptions = autoFocusOptionsProperty.GetValue(null);
+                    if (autoFocusOptions != null)
+                    {
+                        var savePathProperty = autoFocusOptions.GetType().GetProperty("SavePath");
+                        if (savePathProperty != null)
+                        {
+                            var savePath = savePathProperty.GetValue(autoFocusOptions) as string;
+                            if (!string.IsNullOrWhiteSpace(savePath) && Directory.Exists(savePath))
+                            {
+                                return savePath;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch { /* Fall through to default */ }
+
+        // Fallback to common directories
+        return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
     }
 }
