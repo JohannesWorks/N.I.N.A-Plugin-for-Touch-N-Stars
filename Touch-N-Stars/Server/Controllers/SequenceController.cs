@@ -3633,39 +3633,19 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private void ResetItemAndSubsequent(ISequenceItem item, ISequenceRootContainer rootContainer)
         {
-            // Reset the item itself
-            var statusProp = item.GetType().GetProperty("Status", BindingFlags.Public | BindingFlags.Instance);
-            if (statusProp?.CanWrite == true)
-            {
-                var statusType = statusProp.PropertyType;
-                if (statusType.IsEnum)
-                {
-                    foreach (var field in statusType.GetFields(BindingFlags.Public | BindingFlags.Static))
-                    {
-                        if (field.Name == "CREATED")
-                        {
-                            statusProp.SetValue(item, field.GetValue(null));
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Also reset attempts
-            var attemptsProp = item.GetType().GetProperty("Attempts", BindingFlags.Public | BindingFlags.Instance);
-            if (attemptsProp?.CanWrite == true)
-            {
-                attemptsProp.SetValue(item, 0);
-            }
-
-            // If it's a container, recursively reset all items inside it
+            // Use the proper ResetAll() method if available (containers) or ResetProgress() for items
+            // This ensures all internal state is properly reset, including loop conditions' CompletedIterations
             if (item is ISequenceContainer container)
             {
-                foreach (var childItem in container.Items.OfType<ISequenceItem>())
-                {
-                    ResetItemAndSubsequent(childItem, rootContainer);
-                }
+                container.ResetAll();
             }
+            else
+            {
+                item.ResetProgress();
+            }
+
+            // Cascade the reset up to parent containers (matches WPF behavior)
+            item.ResetProgressCascaded();
 
             // Find the parent container and reset all items after this one
             ISequenceContainer parentContainer = null;
