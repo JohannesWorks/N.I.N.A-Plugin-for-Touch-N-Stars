@@ -11,6 +11,7 @@ using NINA.Sequencer.DragDrop;
 using NINA.Sequencer.Interfaces.Mediator;
 using NINA.Sequencer.Mediator;
 using NINA.Sequencer.SequenceItem;
+using NINA.Sequencer.SequenceItem.Utility;
 using NINA.Sequencer.Serialization;
 using NINA.Sequencer.Trigger;
 using System;
@@ -1594,6 +1595,28 @@ namespace TouchNStars.Server.Controllers
                             if (clonedTrigger != null && parentItemContainer is SequenceContainer seqContainer)
                             {
                                 seqContainer.Triggers.Add(clonedTrigger);
+                                clonedTrigger.AttachNewParent(parentItemContainer);
+
+                                // Initialize the trigger to compute derived/dynamic properties
+                                try
+                                {
+                                    var attachMethod = clonedTrigger.GetType().GetMethod("AttachStaticData", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                    if (attachMethod != null)
+                                    {
+                                        attachMethod.Invoke(clonedTrigger, null);
+                                    }
+
+                                    var initMethod = clonedTrigger.GetType().GetMethod("Initialize", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                    if (initMethod != null)
+                                    {
+                                        initMethod.Invoke(clonedTrigger, null);
+                                    }
+                                }
+                                catch (Exception initEx)
+                                {
+                                    Logger.Warning($"Could not initialize trigger during duplication: {initEx.Message}");
+                                }
+
                                 duplicatedObjectId = TrackTrigger(clonedTrigger);
                             }
                         });
@@ -1615,6 +1638,28 @@ namespace TouchNStars.Server.Controllers
                             if (clonedCondition != null && parentItemContainer is SequenceContainer seqContainer)
                             {
                                 seqContainer.Conditions.Add(clonedCondition);
+                                clonedCondition.AttachNewParent(parentItemContainer);
+
+                                // Initialize the condition to compute derived/dynamic properties
+                                try
+                                {
+                                    var attachMethod = clonedCondition.GetType().GetMethod("AttachStaticData", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                    if (attachMethod != null)
+                                    {
+                                        attachMethod.Invoke(clonedCondition, null);
+                                    }
+
+                                    var initMethod = clonedCondition.GetType().GetMethod("Initialize", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                    if (initMethod != null)
+                                    {
+                                        initMethod.Invoke(clonedCondition, null);
+                                    }
+                                }
+                                catch (Exception initEx)
+                                {
+                                    Logger.Warning($"Could not initialize condition during duplication: {initEx.Message}");
+                                }
+
                                 duplicatedObjectId = TrackCondition(clonedCondition);
                             }
                         });
@@ -1768,6 +1813,31 @@ namespace TouchNStars.Server.Controllers
                         if (container is SequenceContainer seqContainer)
                         {
                             seqContainer.Triggers.Add(clonedTrigger);
+
+                            // Attach parent reference - this is crucial for many triggers to work properly
+                            clonedTrigger.AttachNewParent(container);
+
+                            // Initialize the trigger to compute derived/dynamic properties
+                            try
+                            {
+                                // Try calling AttachStaticData() first (common NINA pattern for post-load initialization)
+                                var attachMethod = clonedTrigger.GetType().GetMethod("AttachStaticData", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                if (attachMethod != null)
+                                {
+                                    attachMethod.Invoke(clonedTrigger, null);
+                                }
+
+                                // Then call Initialize() to compute derived properties
+                                var initMethod = clonedTrigger.GetType().GetMethod("Initialize", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                if (initMethod != null)
+                                {
+                                    initMethod.Invoke(clonedTrigger, null);
+                                }
+                            }
+                            catch (Exception initEx)
+                            {
+                                Logger.Warning($"Could not initialize trigger {triggerType}: {initEx.Message}");
+                            }
                         }
                         // Track the trigger with ID
                         createdTriggerId = TrackTrigger(clonedTrigger);
@@ -2050,6 +2120,33 @@ namespace TouchNStars.Server.Controllers
                         if (container is SequenceContainer seqContainer)
                         {
                             seqContainer.Conditions.Add(clonedCondition);
+
+                            // Attach parent reference - this is crucial for many conditions to work properly
+                            clonedCondition.AttachNewParent(container);
+
+                            // Initialize the condition to compute derived/dynamic properties
+                            // Many NINA conditions (e.g., MoonAltitudeCondition) need this to calculate
+                            // properties like "current altitude" and "time until fulfillment"
+                            try
+                            {
+                                // Try calling AttachStaticData() first (common NINA pattern for post-load initialization)
+                                var attachMethod = clonedCondition.GetType().GetMethod("AttachStaticData", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                if (attachMethod != null)
+                                {
+                                    attachMethod.Invoke(clonedCondition, null);
+                                }
+
+                                // Then call Initialize() to compute derived properties
+                                var initMethod = clonedCondition.GetType().GetMethod("Initialize", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                if (initMethod != null)
+                                {
+                                    initMethod.Invoke(clonedCondition, null);
+                                }
+                            }
+                            catch (Exception initEx)
+                            {
+                                Logger.Warning($"Could not initialize condition {conditionType}: {initEx.Message}");
+                            }
                         }
                         // Track the condition with ID
                         createdConditionId = TrackCondition(clonedCondition);
@@ -2253,6 +2350,31 @@ namespace TouchNStars.Server.Controllers
                     }
                 }
 
+                // Expand WaitLoopData progress fields for altitude conditions (excluded from JSON opt-in serialization)
+                if (obj is LoopForAltitudeBase altCondObj)
+                {
+                    objectInfo["CurrentAltitude"] = altCondObj.Data.CurrentAltitude;
+                    objectInfo["TargetAltitude"] = altCondObj.Data.TargetAltitude;
+                    objectInfo["ExpectedTime"] = altCondObj.Data.ExpectedTime;
+                    objectInfo["Comparator"] = altCondObj.Data.Comparator.ToString();
+                }
+
+                // TimeSpanCondition/TimeCondition - RemainingTime is read-only (no public setter)
+                if (obj is TimeSpanCondition timeSpanCondObj)
+                {
+                    objectInfo["RemainingTime"] = timeSpanCondObj.RemainingTime.ToString(@"hh\:mm\:ss");
+                }
+                else if (obj is TimeCondition timeCondObj)
+                {
+                    objectInfo["RemainingTime"] = timeCondObj.RemainingTime.ToString(@"hh\:mm\:ss");
+                }
+
+                // SafetyMonitorCondition - IsSafe has a protected setter
+                if (obj is SafetyMonitorCondition safetyCondObj)
+                {
+                    objectInfo["IsSafe"] = safetyCondObj.IsSafe;
+                }
+
                 // For non-structural container items with subitems, show the Items formatted nicely (e.g., SmartExposure, Focus, etc.)
                 if (!isStructuralContainer && obj is ISequenceContainer featureContainer)
                 {
@@ -2293,7 +2415,7 @@ namespace TouchNStars.Server.Controllers
         /// <summary>
         /// POST /api/sequence/set - Set a property value on any object (item, trigger, or condition) by ID
         /// id: ID of the object
-        /// propertyName: Name of the property to set
+        /// propertyName: Name of the property to set (supports nested properties with dot notation, e.g., "Target.PositionAngle")
         /// value: New value (as string, will be converted to proper type)
         /// </summary>
         [Route(HttpVerbs.Post, "/sequence/set")]
@@ -2314,19 +2436,57 @@ namespace TouchNStars.Server.Controllers
                     return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 404, Type = "Error" };
                 }
 
-                var prop = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
-                if (prop == null || !prop.CanWrite)
-                {
-                    HttpContext.Response.StatusCode = 400;
-                    return new ApiResponse { Success = false, Error = $"Property {propertyName} not found or not writable", StatusCode = 400, Type = "Error" };
-                }
-
                 try
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
-                        object convertedValue = ConvertValue(value, prop.PropertyType);
-                        prop.SetValue(obj, convertedValue);
+                        // Support nested properties (e.g., "Target.PositionAngle")
+                        var propertyParts = propertyName.Split('.');
+
+                        object currentObj = obj;
+                        Type currentType = obj.GetType();
+
+                        // Navigate through nested properties
+                        for (int i = 0; i < propertyParts.Length - 1; i++)
+                        {
+                            var currentPropName = propertyParts[i];
+                            var currentProp = currentType.GetProperty(currentPropName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+                            if (currentProp == null)
+                            {
+                                throw new Exception($"Property '{currentPropName}' not found on type '{currentType.Name}'");
+                            }
+
+                            currentObj = currentProp.GetValue(currentObj);
+                            if (currentObj == null)
+                            {
+                                throw new Exception($"Property '{currentPropName}' returned null; cannot navigate further through '{propertyName}'");
+                            }
+
+                            currentType = currentObj.GetType();
+                        }
+
+                        // Get the final property to set
+                        var finalPropName = propertyParts[propertyParts.Length - 1];
+                        var finalProp = currentType.GetProperty(finalPropName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+                        if (finalProp == null)
+                        {
+                            throw new Exception($"Property '{finalPropName}' not found on type '{currentType.Name}' (full path: {propertyName})");
+                        }
+
+                        // Check if property has a public setter
+                        var setMethod = finalProp.GetSetMethod();
+                        if (setMethod == null)
+                        {
+                            throw new Exception($"Property '{finalPropName}' does not have a public setter (may be read-only)");
+                        }
+
+                        // Convert and set the value
+                        object convertedValue = ConvertValue(value, finalProp.PropertyType);
+                        finalProp.SetValue(currentObj, convertedValue);
+
+                        Logger.Debug($"Property '{propertyName}' set to '{value}' on type '{obj.GetType().Name}'");
                     });
 
                     HttpContext.Response.StatusCode = 200;
@@ -2334,18 +2494,26 @@ namespace TouchNStars.Server.Controllers
                     {
                         Success = true,
                         Error = null,
-
                     };
+                }
+                catch (TargetInvocationException ex)
+                {
+                    // Unwrap TargetInvocationException to show the actual error
+                    var innerException = ex.InnerException ?? ex;
+                    Logger.Error($"Error setting property {propertyName}: {innerException.Message}");
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse { Success = false, Error = $"Failed to set property: {innerException.Message}", StatusCode = 400, Type = "Error" };
                 }
                 catch (Exception ex)
                 {
+                    Logger.Error($"Error setting property {propertyName}: {ex.Message}");
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse { Success = false, Error = $"Failed to set property: {ex.Message}", StatusCode = 400, Type = "Error" };
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error($"Error setting property: {ex}");
+                Logger.Error($"Error in set property endpoint: {ex}");
                 HttpContext.Response.StatusCode = 500;
                 return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
             }
@@ -3872,6 +4040,31 @@ namespace TouchNStars.Server.Controllers
                         {
                             ctable.Add(prop.Name, prop.GetValue(condition));
                         }
+                    }
+
+                    // Expand WaitLoopData progress fields that are excluded from JSON opt-in serialization
+                    if (condition is LoopForAltitudeBase altCond)
+                    {
+                        ctable["CurrentAltitude"] = altCond.Data.CurrentAltitude;
+                        ctable["TargetAltitude"] = altCond.Data.TargetAltitude;
+                        ctable["ExpectedTime"] = altCond.Data.ExpectedTime;
+                        ctable["Comparator"] = altCond.Data.Comparator.ToString();
+                    }
+
+                    // TimeSpanCondition/TimeCondition - RemainingTime is read-only (no public setter)
+                    if (condition is TimeSpanCondition timeSpanCond)
+                    {
+                        ctable["RemainingTime"] = timeSpanCond.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+                    else if (condition is TimeCondition timeCond)
+                    {
+                        ctable["RemainingTime"] = timeCond.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+
+                    // SafetyMonitorCondition - IsSafe has a protected setter
+                    if (condition is SafetyMonitorCondition safetyCond)
+                    {
+                        ctable["IsSafe"] = safetyCond.IsSafe;
                     }
 
                     conditions.Add(ctable);
