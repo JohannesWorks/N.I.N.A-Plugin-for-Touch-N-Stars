@@ -1,14 +1,11 @@
 using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
-using NINA.Core.Enum;
+using NINA.Core.Model.Equipment;
 using NINA.Core.Utility;
-using NINA.Profile.Interfaces;
 using NINA.Sequencer;
 using NINA.Sequencer.Conditions;
 using NINA.Sequencer.Container;
-using NINA.Sequencer.DragDrop;
-using NINA.Sequencer.Interfaces.Mediator;
 using NINA.Sequencer.Mediator;
 using NINA.Sequencer.SequenceItem;
 using NINA.Sequencer.SequenceItem.Utility;
@@ -22,7 +19,6 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Input;
 using TouchNStars.Server.Models;
-using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using System.Threading.Tasks;
 using System.Collections;
@@ -821,8 +817,8 @@ namespace TouchNStars.Server.Controllers
                     };
                 }
 
-                var itemIndices = itemIndexPath.Split(',').Select(s => int.Parse(s.Trim())).ToList();
-                var targetIndices = targetIndexPath.Split(',').Select(s => int.Parse(s.Trim())).ToList();
+                var itemIndices = itemIndexPath.Split(',').Select(s => int.Parse(s.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList();
+                var targetIndices = targetIndexPath.Split(',').Select(s => int.Parse(s.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList();
 
                 // Items must be in the same parent container to move
                 if (itemIndices.Count != targetIndices.Count)
@@ -1344,7 +1340,7 @@ namespace TouchNStars.Server.Controllers
                         }
 
                         // Parse the index path and find the parent container
-                        var indices = indexPath.Split(',').Select(s => int.Parse(s.Trim())).ToList();
+                        var indices = indexPath.Split(',').Select(s => int.Parse(s.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList();
                         var mainContainer = GetMainContainer();
                         if (mainContainer == null)
                         {
@@ -1536,7 +1532,7 @@ namespace TouchNStars.Server.Controllers
                             };
                         }
 
-                        var indices = indexPath.Split(',').Select(s => int.Parse(s.Trim())).ToList();
+                        var indices = indexPath.Split(',').Select(s => int.Parse(s.Trim(), System.Globalization.CultureInfo.InvariantCulture)).ToList();
                         ISequenceContainer parentContainer = mainContainer;
                         for (int i = 0; i < indices.Count - 1; i++)
                         {
@@ -2350,13 +2346,35 @@ namespace TouchNStars.Server.Controllers
                     }
                 }
 
-                // Expand WaitLoopData progress fields for altitude conditions (excluded from JSON opt-in serialization)
-                if (obj is LoopForAltitudeBase altCondObj)
+                // Expand WaitLoopData progress fields for altitude-based items/conditions (excluded from JSON opt-in serialization)
+                try
                 {
-                    objectInfo["CurrentAltitude"] = altCondObj.Data.CurrentAltitude;
-                    objectInfo["TargetAltitude"] = altCondObj.Data.TargetAltitude;
-                    objectInfo["ExpectedTime"] = altCondObj.Data.ExpectedTime;
-                    objectInfo["Comparator"] = altCondObj.Data.Comparator.ToString();
+                    var dataProperty = objTypeInfo.GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+                    if (dataProperty != null && dataProperty.CanRead)
+                    {
+                        var dataValue = dataProperty.GetValue(obj);
+                        if (dataValue != null)
+                        {
+                            var dataType = dataValue.GetType();
+                            // Check if Data object has the progress field properties
+                            var currentAltProp = dataType.GetProperty("CurrentAltitude", BindingFlags.Public | BindingFlags.Instance);
+                            var targetAltProp = dataType.GetProperty("TargetAltitude", BindingFlags.Public | BindingFlags.Instance);
+                            var expectedTimeProp = dataType.GetProperty("ExpectedTime", BindingFlags.Public | BindingFlags.Instance);
+                            var comparatorProp = dataType.GetProperty("Comparator", BindingFlags.Public | BindingFlags.Instance);
+
+                            if (currentAltProp != null && targetAltProp != null && expectedTimeProp != null && comparatorProp != null)
+                            {
+                                objectInfo["CurrentAltitude"] = currentAltProp.GetValue(dataValue);
+                                objectInfo["TargetAltitude"] = targetAltProp.GetValue(dataValue);
+                                objectInfo["ExpectedTime"] = expectedTimeProp.GetValue(dataValue);
+                                objectInfo["Comparator"] = comparatorProp.GetValue(dataValue)?.ToString();
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not extract progress fields from Data property: {ex.Message}");
                 }
 
                 // TimeSpanCondition/TimeCondition - RemainingTime is read-only (no public setter)
@@ -2445,6 +2463,7 @@ namespace TouchNStars.Server.Controllers
 
                         object currentObj = obj;
                         Type currentType = obj.GetType();
+                        object rootObj = obj;
 
                         // Navigate through nested properties
                         for (int i = 0; i < propertyParts.Length - 1; i++)
@@ -2485,6 +2504,25 @@ namespace TouchNStars.Server.Controllers
                         // Convert and set the value
                         object convertedValue = ConvertValue(value, finalProp.PropertyType);
                         finalProp.SetValue(currentObj, convertedValue);
+
+                        // Manually raise PropertyChanged notification if the object supports it
+                        // This handles properties that don't raise notifications themselves (NINA bug workaround)
+                        var raiseMethod = currentObj.GetType().GetMethod("RaisePropertyChanged",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                            null,
+                            new[] { typeof(string) },
+                            null);
+                        if (raiseMethod != null)
+                        {
+                            try
+                            {
+                                raiseMethod.Invoke(currentObj, new object[] { finalPropName });
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Warning($"Failed to raise PropertyChanged for {finalPropName}: {ex.Message}");
+                            }
+                        }
 
                         Logger.Debug($"Property '{propertyName}' set to '{value}' on type '{obj.GetType().Name}'");
                     });
@@ -2599,28 +2637,57 @@ namespace TouchNStars.Server.Controllers
                     return bool.Parse(value);
 
                 if (targetType == typeof(int))
-                    return int.Parse(value);
+                    return int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(double))
-                    return double.Parse(value);
+                    return double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(decimal))
-                    return decimal.Parse(value);
+                    return decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(long))
-                    return long.Parse(value);
+                    return long.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(float))
-                    return float.Parse(value);
+                    return float.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType.IsEnum)
                     return Enum.Parse(targetType, value);
 
                 if (targetType == typeof(TimeSpan))
-                    return TimeSpan.Parse(value);
+                    return TimeSpan.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(DateTime))
-                    return DateTime.Parse(value);
+                    return DateTime.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+
+                if (targetType == typeof(Guid))
+                    return Guid.Parse(value);
+
+                // Special handling for FilterInfo - look up by name
+                if (targetType.Name == "FilterInfo")
+                {
+                    try
+                    {
+                        // Allow explicit null to use current filter
+                        if (value.Equals("null", StringComparison.OrdinalIgnoreCase))
+                            return null;
+
+                        var profile = TouchNStars.Mediators?.Profile?.ActiveProfile;
+                        if (profile?.FilterWheelSettings?.FilterWheelFilters != null)
+                        {
+                            // Try to find filter by name
+                            var filter = profile.FilterWheelSettings.FilterWheelFilters.FirstOrDefault(f => f.Name == value);
+                            if (filter != null)
+                                return filter;
+                        }
+                        throw new Exception($"Filter '{value}' not found in active profile");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Error looking up filter by name '{value}': {ex.Message}");
+                        throw;
+                    }
+                }
 
                 // For complex types, try JSON deserialization
                 return Newtonsoft.Json.JsonConvert.DeserializeObject(value, targetType);
@@ -2687,7 +2754,7 @@ namespace TouchNStars.Server.Controllers
                 // Try to get the Value property
                 var exprValue = type.GetProperty("Value")?.GetValue(value);
                 if (exprValue != null && !(exprValue is string str && str.StartsWith("Undefined")))
-                    return exprValue;
+                    return SafeSerializeValue(exprValue);
 
                 // If all else fails, check if there's a meaningful ToString()
                 var strValue = value.ToString();
@@ -2698,6 +2765,14 @@ namespace TouchNStars.Server.Controllers
             // For complex objects, return string representation
             try
             {
+                // If it's a numeric type, use invariant culture formatting
+                if (value is double d)
+                    return d.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (value is decimal dec)
+                    return dec.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (value is float f)
+                    return f.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
                 return value.ToString();
             }
             catch
@@ -4112,6 +4187,15 @@ namespace TouchNStars.Server.Controllers
                         {
                             it.Add(prop.Name, prop.GetValue(item));
                         }
+                    }
+
+                    // Expand progress fields for items with wait/progress data
+                    if (item is LoopForAltitudeBase altItem)
+                    {
+                        it["CurrentAltitude"] = altItem.Data.CurrentAltitude;
+                        it["TargetAltitude"] = altItem.Data.TargetAltitude;
+                        it["ExpectedTime"] = altItem.Data.ExpectedTime;
+                        it["Comparator"] = altItem.Data.Comparator.ToString();
                     }
 
                     result.Add(it);
