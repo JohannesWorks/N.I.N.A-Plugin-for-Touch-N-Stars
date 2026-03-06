@@ -91,7 +91,9 @@ public static class INDIMountDrivers
         new INDIDriver { Name = "indi_lx200_OpenAstroTech", Label = "LX200 OpenAstroTech", Type = "telescope" },
         new INDIDriver { Name = "indi_lx200_pegasus_nyx101", Label = "LX200 Pegasus NYX101", Type = "telescope" },
         new INDIDriver { Name = "indi_lx200_TeenAstro", Label = "LX200 TeenAstro", Type = "telescope" },
+        new INDIDriver { Name = "indi_lx200gps", Label = "LX200 GPS", Type = "telescope" },
         new INDIDriver { Name = "indi_skywatcherAltAzMount", Label = "Skywatcher AltAz", Type = "telescope" },
+        
     };
 }
 
