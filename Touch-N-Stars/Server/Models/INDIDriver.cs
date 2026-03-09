@@ -56,7 +56,6 @@ public static class INDIFilterWheelDrivers
     public static readonly List<INDIDriver> Drivers = new()
     {
         new INDIDriver { Name = "indi_pegasusindigo_wheel", Label = "Pegasus Indigo Filter Wheel", Type = "filterwheel" },
-        new INDIDriver { Name = "indi_asi_wheel", Label = "ZWO Filter Wheel", Type = "filterwheel" },
         new INDIDriver { Name = "indi_simulator_wheel", Label = "Simulator Filter Wheel", Type = "filterwheel" },
     };
 }
