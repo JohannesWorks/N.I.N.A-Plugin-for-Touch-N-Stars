@@ -527,7 +527,10 @@ namespace TouchNStars.Server.Controllers
 
                     List<Hashtable> sequenceData =
                     [
-                        new Hashtable() { { "GlobalTriggers", getTriggers((SequenceContainer)mainContainer) } },
+                        new Hashtable() {
+                            { "Id", GetOrCreateId(mainContainer, ObjectType.Item) },
+                            { "GlobalTriggers", getTriggers((SequenceContainer)mainContainer) }
+                        },
                         .. getSequenceRecursively(mainContainer),
                     ]; // Global triggers
 
@@ -1728,29 +1731,17 @@ namespace TouchNStars.Server.Controllers
                     }
 
                     // Check if item can have triggers
-                    if (!(item is ISequenceContainer container))
+                    if (!(item is SequenceContainer))
                     {
                         HttpContext.Response.StatusCode = 400;
                         return new ApiResponse
                         {
                             Success = false,
-                            Error = "Only containers can have triggers",
+                            Error = "Only sequence containers can have triggers",
                         };
                     }
 
-                    // Validate that the container type allows triggers
-                    // Only Sequential, Parallel, and Target containers can have triggers
-                    var containerTypeName = item.GetType().Name;
-                    var allowedContainers = new[] { "SequentialContainer", "ParallelContainer", "TargetContainer" };
-                    if (!allowedContainers.Contains(containerTypeName))
-                    {
-                        HttpContext.Response.StatusCode = 400;
-                        return new ApiResponse
-                        {
-                            Success = false,
-                            Error = $"Container type '{containerTypeName}' is not allowed to have triggers. Only Sequential, Parallel, and Target containers support triggers.",
-                        };
-                    }
+                    var container = item as ISequenceContainer;
 
                     // Get factory and find the trigger template
                     var factory = GetFactory();
@@ -2247,6 +2238,39 @@ namespace TouchNStars.Server.Controllers
         }
 
         /// <summary>
+        /// DELETE /api/sequence/delete - Delete a sequence file
+        /// filePath: Path of the file to delete
+        /// </summary>
+        [Route(HttpVerbs.Delete, "/sequence/delete")]
+        public ApiResponse DeleteSequenceFile([QueryField] string filePath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse { Success = false, Error = "filePath parameter required", StatusCode = 400, Type = "Error" };
+                }
+
+                if (!File.Exists(filePath))
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse { Success = false, Error = $"File not found: {filePath}", StatusCode = 404, Type = "Error" };
+                }
+
+                File.Delete(filePath);
+
+                HttpContext.Response.StatusCode = 200;
+                return new ApiResponse { Success = true, Error = null, StatusCode = 200, Type = "Success" };
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error deleting sequence file: {ex}");
+                HttpContext.Response.StatusCode = 500;
+                return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
+            }
+        }
+
         /// <summary>
         /// GET /api/sequence/info - Get detailed metadata about any object (item, trigger, or condition) by ID
         /// id: ID of the object (item, trigger, or condition)
@@ -2459,6 +2483,7 @@ namespace TouchNStars.Server.Controllers
                     Application.Current.Dispatcher.Invoke(() =>
                     {
                         // Support nested properties (e.g., "Target.PositionAngle")
+                        // Also supports indexed collection access (e.g., "ExposureItems[0].Filter")
                         var propertyParts = propertyName.Split('.');
 
                         object currentObj = obj;
@@ -2469,6 +2494,21 @@ namespace TouchNStars.Server.Controllers
                         for (int i = 0; i < propertyParts.Length - 1; i++)
                         {
                             var currentPropName = propertyParts[i];
+
+                            // Check for index notation e.g. ExposureItems[2]
+                            int? collectionIndex = null;
+                            var bracketStart = currentPropName.IndexOf('[');
+                            if (bracketStart >= 0)
+                            {
+                                var bracketEnd = currentPropName.IndexOf(']', bracketStart);
+                                if (bracketEnd > bracketStart &&
+                                    int.TryParse(currentPropName.Substring(bracketStart + 1, bracketEnd - bracketStart - 1), out int idx))
+                                {
+                                    collectionIndex = idx;
+                                    currentPropName = currentPropName.Substring(0, bracketStart);
+                                }
+                            }
+
                             var currentProp = currentType.GetProperty(currentPropName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
 
                             if (currentProp == null)
@@ -2480,6 +2520,21 @@ namespace TouchNStars.Server.Controllers
                             if (currentObj == null)
                             {
                                 throw new Exception($"Property '{currentPropName}' returned null; cannot navigate further through '{propertyName}'");
+                            }
+
+                            // If an index was specified, dereference the collection
+                            if (collectionIndex.HasValue)
+                            {
+                                if (currentObj is System.Collections.IList list)
+                                {
+                                    if (collectionIndex.Value < 0 || collectionIndex.Value >= list.Count)
+                                        throw new Exception($"Index {collectionIndex.Value} is out of range for '{currentPropName}' (count: {list.Count})");
+                                    currentObj = list[collectionIndex.Value];
+                                }
+                                else
+                                {
+                                    throw new Exception($"Property '{currentPropName}' does not implement IList and cannot be indexed");
+                                }
                             }
 
                             currentType = currentObj.GetType();
