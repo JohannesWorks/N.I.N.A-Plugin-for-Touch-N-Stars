@@ -2482,6 +2482,33 @@ namespace TouchNStars.Server.Controllers
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
+                        // Handle flat aliases for WaitLoopData fields (mirrors GetPropertyInfo flattening).
+                        // "TargetAltitude" -> "Data.Offset"  (the persistent user-settable value; Data.TargetAltitude
+                        //   is computed and gets overwritten by CalculateExpectedTime on every Check() call).
+                        // "Comparator"     -> "Data.Comparator"
+                        if (propertyName == "TargetAltitude" || propertyName == "Comparator")
+                        {
+                            var dataPropCheck = obj.GetType().GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+                            if (dataPropCheck != null)
+                            {
+                                var dataValCheck = dataPropCheck.GetValue(obj);
+                                if (dataValCheck != null)
+                                {
+                                    var dataTCheck = dataValCheck.GetType();
+                                    if (propertyName == "TargetAltitude" &&
+                                        dataTCheck.GetProperty("Offset", BindingFlags.Public | BindingFlags.Instance)?.GetSetMethod() != null)
+                                    {
+                                        propertyName = "Data.Offset";
+                                    }
+                                    else if (propertyName == "Comparator" &&
+                                        dataTCheck.GetProperty("Comparator", BindingFlags.Public | BindingFlags.Instance)?.GetSetMethod() != null)
+                                    {
+                                        propertyName = "Data.Comparator";
+                                    }
+                                }
+                            }
+                        }
+
                         // Support nested properties (e.g., "Target.PositionAngle")
                         // Also supports indexed collection access (e.g., "ExposureItems[0].Filter")
                         var propertyParts = propertyName.Split('.');
