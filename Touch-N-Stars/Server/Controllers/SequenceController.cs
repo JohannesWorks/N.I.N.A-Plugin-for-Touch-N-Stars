@@ -2491,7 +2491,7 @@ namespace TouchNStars.Server.Controllers
                     {
                         try
                         {
-                            objectInfo.Add(prop.Name, prop.GetValue(obj));
+                            objectInfo.Add(prop.Name, SafeSerializeValue(prop.GetValue(obj)));
                         }
                         catch (Exception ex)
                         {
@@ -2965,6 +2965,16 @@ namespace TouchNStars.Server.Controllers
                     return list;
                 }
                 catch { /* Fall through to other handlers */ }
+            }
+
+            // Handle IDateTimeProvider - serialize as {Name, FullTypeName}
+            if (value is NINA.Sequencer.Utility.DateTimeProvider.IDateTimeProvider dtProvider)
+            {
+                return new Hashtable
+                {
+                    { "Name", dtProvider.Name },
+                    { "FullTypeName", dtProvider.GetType().FullName }
+                };
             }
 
             // Special handling for Expression objects
