@@ -254,6 +254,62 @@ namespace TouchNStars.Server.Controllers
         }
 
         /// <summary>
+        /// GET /api/sequence/date-time-providers - List all available date/time providers
+        /// </summary>
+        [Route(HttpVerbs.Get, "/sequence/date-time-providers")]
+        public SequenceItemsResponse ListDateTimeProviders()
+        {
+            try
+            {
+                var factory = GetFactory();
+
+                if (factory?.DateTimeProviders == null || factory.DateTimeProviders.Count == 0)
+                {
+                    HttpContext.Response.StatusCode = 503;
+                    return new SequenceItemsResponse
+                    {
+                        Success = false,
+                        Error = "Date/time providers not loaded yet",
+                        Items = Array.Empty<SequenceItemMetadata>(),
+                        Total = 0
+                    };
+                }
+
+                var result = factory.DateTimeProviders
+                    .Select(provider => new SequenceItemMetadata
+                    {
+                        Name = provider.Name ?? provider.GetType().Name,
+                        Description = "DateTimeProvider",
+                        Category = "DateTimeProvider",
+                        FullTypeName = provider.GetType().FullName
+                    })
+                    .OrderBy(x => x.Name)
+                    .ToArray();
+
+                HttpContext.Response.StatusCode = 200;
+                return new SequenceItemsResponse
+                {
+                    Success = true,
+                    Items = result,
+                    Total = result.Length,
+                    Error = null
+                };
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error listing date/time providers: {ex}");
+                HttpContext.Response.StatusCode = 500;
+                return new SequenceItemsResponse
+                {
+                    Success = false,
+                    Error = $"Internal server error: {ex.Message}",
+                    Items = Array.Empty<SequenceItemMetadata>(),
+                    Total = 0
+                };
+            }
+        }
+
+        /// <summary>
         /// GET /api/sequence/files - List all available sequence files
         /// </summary>
         [Route(HttpVerbs.Get, "/sequence/files")]
@@ -744,12 +800,12 @@ namespace TouchNStars.Server.Controllers
                 else if (triggerTemplate != null)
                 {
                     // It's a trigger - use the trigger add logic
-                    return AddTrigger(targetId, type);
+                    return AddTrigger(targetId, type, insertAfter);
                 }
                 else if (conditionTemplate != null)
                 {
                     // It's a condition - use the condition add logic
-                    return AddCondition(targetId, type);
+                    return AddCondition(targetId, type, insertAfter);
                 }
                 else
                 {
@@ -768,11 +824,11 @@ namespace TouchNStars.Server.Controllers
                             }
                             else if (instance is ISequenceTrigger)
                             {
-                                return AddTrigger(targetId, type);
+                                return AddTrigger(targetId, type, insertAfter);
                             }
                             else if (instance is ISequenceCondition)
                             {
-                                return AddCondition(targetId, type);
+                                return AddCondition(targetId, type, insertAfter);
                             }
                         }
                     }
@@ -1692,17 +1748,17 @@ namespace TouchNStars.Server.Controllers
         /// itemId: ID of the item to add trigger to
         /// triggerType: Type name of the trigger to add
         /// </summary>
-        private ApiResponse AddTrigger(string itemId, string triggerType)
+        private ApiResponse AddTrigger(string targetId, string triggerType, bool? insertAfter = null)
         {
             try
             {
-                if (string.IsNullOrEmpty(itemId) || string.IsNullOrEmpty(triggerType))
+                if (string.IsNullOrEmpty(targetId) || string.IsNullOrEmpty(triggerType))
                 {
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse
                     {
                         Success = false,
-                        Error = "itemId and triggerType parameters are required",
+                        Error = "targetId and triggerType parameters are required",
                     };
                 }
 
@@ -1719,29 +1775,57 @@ namespace TouchNStars.Server.Controllers
 
                 try
                 {
-                    var item = FindItemById(itemId);
-                    if (item == null)
-                    {
-                        HttpContext.Response.StatusCode = 404;
-                        return new ApiResponse
-                        {
-                            Success = false,
-                            Error = $"Item not found with ID: {itemId}",
-                        };
-                    }
+                    // targetId may be an existing trigger (insert before/after it) or a container (append)
+                    ISequenceContainer container;
+                    int? insertIndex = null;
 
-                    // Check if item can have triggers
-                    if (!(item is SequenceContainer))
+                    var existingTrigger = FindObjectById(targetId) as ISequenceTrigger;
+                    if (existingTrigger != null)
                     {
-                        HttpContext.Response.StatusCode = 400;
-                        return new ApiResponse
+                        var mainContainer = GetMainContainer();
+                        if (mainContainer == null)
                         {
-                            Success = false,
-                            Error = "Only sequence containers can have triggers",
-                        };
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse { Success = false, Error = "No sequence loaded" };
+                        }
+                        container = FindTriggerContainer(mainContainer, existingTrigger);
+                        if (container == null)
+                        {
+                            HttpContext.Response.StatusCode = 404;
+                            return new ApiResponse { Success = false, Error = $"Could not find container for trigger ID: {targetId}" };
+                        }
+                        if (container is SequenceContainer seqCont)
+                        {
+                            int idx = seqCont.Triggers.IndexOf(existingTrigger);
+                            insertIndex = idx + ((insertAfter ?? true) ? 1 : 0);
+                        }
                     }
+                    else
+                    {
+                        var item = FindItemById(targetId);
+                        if (item == null)
+                        {
+                            HttpContext.Response.StatusCode = 404;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = $"Object not found with ID: {targetId}",
+                            };
+                        }
 
-                    var container = item as ISequenceContainer;
+                        // Check if item can have triggers
+                        if (!(item is SequenceContainer))
+                        {
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = "Only sequence containers can have triggers",
+                            };
+                        }
+
+                        container = item as ISequenceContainer;
+                    }
 
                     // Get factory and find the trigger template
                     var factory = GetFactory();
@@ -1799,7 +1883,15 @@ namespace TouchNStars.Server.Controllers
                     {
                         if (container is SequenceContainer seqContainer)
                         {
-                            seqContainer.Triggers.Add(clonedTrigger);
+                            if (insertIndex.HasValue)
+                            {
+                                int idx = Math.Max(0, Math.Min(insertIndex.Value, seqContainer.Triggers.Count));
+                                seqContainer.Triggers.Insert(idx, clonedTrigger);
+                            }
+                            else
+                            {
+                                seqContainer.Triggers.Add(clonedTrigger);
+                            }
 
                             // Attach parent reference - this is crucial for many triggers to work properly
                             clonedTrigger.AttachNewParent(container);
@@ -1987,17 +2079,17 @@ namespace TouchNStars.Server.Controllers
         /// itemId: ID of the item to add condition to
         /// conditionType: Type name of the condition to add
         /// </summary>
-        private ApiResponse AddCondition(string itemId, string conditionType)
+        private ApiResponse AddCondition(string targetId, string conditionType, bool? insertAfter = null)
         {
             try
             {
-                if (string.IsNullOrEmpty(itemId) || string.IsNullOrEmpty(conditionType))
+                if (string.IsNullOrEmpty(targetId) || string.IsNullOrEmpty(conditionType))
                 {
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse
                     {
                         Success = false,
-                        Error = "itemId and conditionType parameters are required",
+                        Error = "targetId and conditionType parameters are required",
                     };
                 }
 
@@ -2014,40 +2106,70 @@ namespace TouchNStars.Server.Controllers
 
                 try
                 {
-                    var item = FindItemById(itemId);
-                    if (item == null)
-                    {
-                        HttpContext.Response.StatusCode = 404;
-                        return new ApiResponse
-                        {
-                            Success = false,
-                            Error = $"Item not found with ID: {itemId}",
-                        };
-                    }
+                    // targetId may be an existing condition (insert before/after it) or a container (append)
+                    ISequenceContainer container;
+                    int? insertIndex = null;
 
-                    // Check if item can have conditions
-                    if (!(item is ISequenceContainer container))
+                    var existingCondition = FindObjectById(targetId) as ISequenceCondition;
+                    if (existingCondition != null)
                     {
-                        HttpContext.Response.StatusCode = 400;
-                        return new ApiResponse
+                        var mainContainer = GetMainContainer();
+                        if (mainContainer == null)
                         {
-                            Success = false,
-                            Error = "Only containers can have conditions",
-                        };
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse { Success = false, Error = "No sequence loaded" };
+                        }
+                        container = FindConditionContainer(mainContainer, existingCondition);
+                        if (container == null)
+                        {
+                            HttpContext.Response.StatusCode = 404;
+                            return new ApiResponse { Success = false, Error = $"Could not find container for condition ID: {targetId}" };
+                        }
+                        if (container is SequenceContainer seqCont)
+                        {
+                            int idx = seqCont.Conditions.IndexOf(existingCondition);
+                            insertIndex = idx + ((insertAfter ?? true) ? 1 : 0);
+                        }
                     }
-
-                    // Validate that the container type allows conditions
-                    // Only Sequential, Parallel, and Target containers can have conditions
-                    var containerTypeName = item.GetType().Name;
-                    var allowedContainers = new[] { "SequentialContainer", "ParallelContainer", "TargetContainer" };
-                    if (!allowedContainers.Contains(containerTypeName))
+                    else
                     {
-                        HttpContext.Response.StatusCode = 400;
-                        return new ApiResponse
+                        var item = FindItemById(targetId);
+                        if (item == null)
                         {
-                            Success = false,
-                            Error = $"Container type '{containerTypeName}' is not allowed to have conditions. Only Sequential, Parallel, and Target containers support conditions.",
-                        };
+                            HttpContext.Response.StatusCode = 404;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = $"Object not found with ID: {targetId}",
+                            };
+                        }
+
+                        // Check if item can have conditions
+                        if (!(item is ISequenceContainer cont))
+                        {
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = "Only containers can have conditions",
+                            };
+                        }
+
+                        // Validate that the container type allows conditions
+                        // Only Sequential, Parallel, and Target containers can have conditions
+                        var containerTypeName = item.GetType().Name;
+                        var allowedContainers = new[] { "SequentialContainer", "ParallelContainer", "TargetContainer" };
+                        if (!allowedContainers.Contains(containerTypeName))
+                        {
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = $"Container type '{containerTypeName}' is not allowed to have conditions. Only Sequential, Parallel, and Target containers support conditions.",
+                            };
+                        }
+
+                        container = cont;
                     }
 
                     // Get factory and find the condition template
@@ -2106,7 +2228,15 @@ namespace TouchNStars.Server.Controllers
                     {
                         if (container is SequenceContainer seqContainer)
                         {
-                            seqContainer.Conditions.Add(clonedCondition);
+                            if (insertIndex.HasValue)
+                            {
+                                int idx = Math.Max(0, Math.Min(insertIndex.Value, seqContainer.Conditions.Count));
+                                seqContainer.Conditions.Insert(idx, clonedCondition);
+                            }
+                            else
+                            {
+                                seqContainer.Conditions.Add(clonedCondition);
+                            }
 
                             // Attach parent reference - this is crucial for many conditions to work properly
                             clonedCondition.AttachNewParent(container);
@@ -2769,6 +2899,22 @@ namespace TouchNStars.Server.Controllers
                         Logger.Error($"Error looking up filter by name '{value}': {ex.Message}");
                         throw;
                     }
+                }
+
+                // Special handling for IDateTimeProvider - look up by full type name or display name
+                if (typeof(NINA.Sequencer.Utility.DateTimeProvider.IDateTimeProvider).IsAssignableFrom(targetType))
+                {
+                    var factory = GetFactory();
+                    if (factory?.DateTimeProviders != null)
+                    {
+                        var provider = factory.DateTimeProviders.FirstOrDefault(p =>
+                            string.Equals(p.GetType().FullName, value, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(p.GetType().Name, value, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(p.Name, value, StringComparison.OrdinalIgnoreCase));
+                        if (provider != null)
+                            return provider;
+                    }
+                    throw new Exception($"DateTimeProvider '{value}' not found");
                 }
 
                 // For complex types, try JSON deserialization
