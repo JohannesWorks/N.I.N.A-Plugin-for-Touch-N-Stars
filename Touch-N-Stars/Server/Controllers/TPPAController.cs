@@ -4,11 +4,9 @@ using EmbedIO.WebApi;
 using NINA.Core.Utility;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Globalization;
 using System.Reflection;
 using System.Threading.Tasks;
-using TouchNStars.Server.Infrastructure;
-using TouchNStars.Server.Models;
 using TouchNStars.Utility;
 
 namespace TouchNStars.Server.Controllers;
@@ -18,30 +16,95 @@ namespace TouchNStars.Server.Controllers;
 /// </summary>
 public class TPPAController : WebApiController
 {
-    /// <summary>
-    /// Gets the PolarAlignment Settings type
-    /// </summary>
-    private Type GetPolarAlignmentSettingsType()
-    {
-        return Type.GetType("NINA.Plugins.PolarAlignment.Properties.Settings, NINA.Plugins.PolarAlignment");
-    }
-
-    /// <summary>
-    /// Gets the Default settings instance from PolarAlignment plugin
-    /// </summary>
     private object GetPolarAlignmentSettingsInstance()
     {
-        var settingsType = GetPolarAlignmentSettingsType();
-        if (settingsType == null)
-        {
-            return null;
-        }
-
+        var settingsType = Type.GetType("NINA.Plugins.PolarAlignment.Properties.Settings, NINA.Plugins.PolarAlignment");
+        if (settingsType == null) return null;
         var defaultProperty = settingsType.GetProperty("Default",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
+            BindingFlags.Public | BindingFlags.Static);
         return defaultProperty?.GetValue(null);
     }
+
+    /// <summary>
+    /// Gets the live PolarAlignment instruction instance from DockablePolarAlignmentVM
+    /// by accessing the MessageBroker's subscriber list for the start-alignment topic.
+    /// This is the same object WPF binds to for TargetDistance, MoveRate etc.
+    /// </summary>
+    private object GetPolarAlignmentInstruction()
+    {
+        try
+        {
+            const string topic = "PolarAlignmentPlugin_DockablePolarAlignmentVM_StartAlignment";
+            var broker = TouchNStars.Mediators.MessageBroker;
+            if (broker == null)
+            {
+                Logger.Warning("MessageBroker is null");
+                return null;
+            }
+
+            // Access the private subscribers dictionary via reflection
+            var subscribersField = broker.GetType().GetField("subscribers",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (subscribersField == null)
+            {
+                Logger.Warning("Could not find subscribers field on MessageBroker");
+                return null;
+            }
+
+            var subscribersDict = subscribersField.GetValue(broker) as System.Collections.IDictionary;
+            if (subscribersDict == null || !subscribersDict.Contains(topic))
+            {
+                Logger.Warning($"No subscribers found for topic: {topic}");
+                return null;
+            }
+
+            var list = subscribersDict[topic] as System.Collections.IList;
+            if (list == null || list.Count == 0)
+            {
+                Logger.Warning("Subscriber list for start-alignment topic is empty");
+                return null;
+            }
+
+            // Find the DockablePolarAlignmentVM subscriber
+            foreach (var subscriber in list)
+            {
+                if (subscriber == null) continue;
+                var subType = subscriber.GetType();
+                if (subType.Name == "DockablePolarAlignmentVM")
+                {
+                    // Get its PolarAlignment instruction property
+                    var paProp = subType.GetProperty("PolarAlignment",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (paProp == null)
+                    {
+                        Logger.Warning("PolarAlignment property not found on DockablePolarAlignmentVM");
+                        return null;
+                    }
+                    var pa = paProp.GetValue(subscriber);
+                    Logger.Info($"GetPolarAlignmentInstruction: Found PolarAlignment instance: {(pa != null ? pa.GetType().Name : "null")}");
+                    return pa;
+                }
+            }
+
+            Logger.Warning("DockablePolarAlignmentVM not found in start-alignment subscribers");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error in GetPolarAlignmentInstruction: {ex.Message}", ex);
+            return null;
+        }
+    }
+
+    // Maps Settings.Default property names to PolarAlignment instruction property names
+    private static readonly Dictionary<string, string> SettingsToInstructionMap = new()
+    {
+        { "DefaultTargetDistance", "TargetDistance" },
+        { "DefaultMoveRate",       "MoveRate" },
+        { "DefaultEastDirection",  "EastDirection" },
+        { "DefaultSearchRadius",   "SearchRadius" },
+        { "AlignmentTolerance",    "AlignmentTolerance" },
+    };
 
     /// <summary>
     /// Gets all available TPPA/PolarAlignment options and their current values
@@ -93,7 +156,7 @@ public class TPPAController : WebApiController
             foreach (var optionName in optionProperties)
             {
                 var property = settingsType.GetProperty(optionName,
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    BindingFlags.Public | BindingFlags.Instance);
 
                 if (property != null && property.CanRead)
                 {
@@ -184,7 +247,7 @@ public class TPPAController : WebApiController
                 try
                 {
                     var property = settingsType.GetProperty(optionName,
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        BindingFlags.Public | BindingFlags.Instance);
 
                     if (property == null)
                     {
@@ -198,7 +261,7 @@ public class TPPAController : WebApiController
                         continue;
                     }
 
-                    // Convert the value to the correct type
+                    // Convert the value to the correct type (culture-invariant)
                     object convertedValue = newValue;
                     if (newValue != null)
                     {
@@ -210,15 +273,21 @@ public class TPPAController : WebApiController
                         }
                         else if (targetType == typeof(int) && newValue is not int)
                         {
-                            convertedValue = Convert.ToInt32(newValue);
+                            convertedValue = newValue is string strInt 
+                                ? int.Parse(strInt, CultureInfo.InvariantCulture)
+                                : Convert.ToInt32(newValue, CultureInfo.InvariantCulture);
                         }
                         else if (targetType == typeof(double) && newValue is not double)
                         {
-                            convertedValue = Convert.ToDouble(newValue);
+                            convertedValue = newValue is string strDouble
+                                ? double.Parse(strDouble, CultureInfo.InvariantCulture)
+                                : Convert.ToDouble(newValue, CultureInfo.InvariantCulture);
                         }
                         else if (targetType == typeof(float) && newValue is not float)
                         {
-                            convertedValue = Convert.ToSingle(newValue);
+                            convertedValue = newValue is string strFloat
+                                ? float.Parse(strFloat, CultureInfo.InvariantCulture)
+                                : Convert.ToSingle(newValue, CultureInfo.InvariantCulture);
                         }
                     }
 
@@ -232,19 +301,67 @@ public class TPPAController : WebApiController
                 }
             }
 
-            // Save the settings using the Save method if it exists
+            // Save and reload settings
             try
             {
-                var saveMethod = settingsType.GetMethod("Save",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (saveMethod != null)
+                var saveMethod = settingsType.GetMethod("Save", BindingFlags.Public | BindingFlags.Instance);
+                saveMethod?.Invoke(settingsInstance, null);
+                var reloadMethod = settingsType.GetMethod("Reload", BindingFlags.Public | BindingFlags.Instance);
+                reloadMethod?.Invoke(settingsInstance, null);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error during Save/Reload: {ex.Message}", ex);
+            }
+
+            // Sync updated settings to the live PolarAlignment instruction instance
+            // (same as what WPF binds to via DockablePolarAlignmentVM.PolarAlignment)
+            try
+            {
+                var paInstance = GetPolarAlignmentInstruction();
+                if (paInstance != null)
                 {
-                    saveMethod.Invoke(settingsInstance, null);
+                    var paType = paInstance.GetType();
+                    foreach (var kvp in requestData)
+                    {
+                        var settingName = kvp.Key;
+                        var newValue = kvp.Value;
+                        if (!SettingsToInstructionMap.TryGetValue(settingName, out var instrPropName))
+                            continue;
+
+                        var instrProp = paType.GetProperty(instrPropName,
+                            BindingFlags.Public | BindingFlags.Instance);
+                        if (instrProp == null || !instrProp.CanWrite || newValue == null)
+                            continue;
+
+                        try
+                        {
+                            object converted = newValue;
+                            var targetType = instrProp.PropertyType;
+                            if (targetType == typeof(int) && newValue is not int)
+                                converted = Convert.ToInt32(newValue, CultureInfo.InvariantCulture);
+                            else if (targetType == typeof(double) && newValue is not double)
+                                converted = Convert.ToDouble(newValue, CultureInfo.InvariantCulture);
+                            else if (targetType == typeof(bool) && newValue is string sb)
+                                converted = bool.Parse(sb);
+
+                            instrProp.SetValue(paInstance, converted);
+                            Logger.Info($"Synced PolarAlignment.{instrPropName} = {converted}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"Could not sync PolarAlignment.{instrPropName}: {ex.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    Logger.Warning("PolarAlignment instruction instance not found — values saved to settings only");
                 }
             }
             catch (Exception ex)
             {
-                Logger.Warning($"Could not explicitly save settings: {ex.Message}");
+                Logger.Error($"Error syncing PolarAlignment instruction: {ex.Message}", ex);
             }
 
             HttpContext.Response.StatusCode = 200;
@@ -323,15 +440,15 @@ public class TPPAController : WebApiController
                 try
                 {
                     var property = settingsType.GetProperty(kvp.Key,
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        BindingFlags.Public | BindingFlags.Instance);
 
                     if (property != null && property.CanWrite)
                     {
-                        // Convert the default value to the correct type if needed
+                        // Convert the default value to the correct type if needed (culture-invariant)
                         var convertedValue = kvp.Value;
                         if (kvp.Value != null && property.PropertyType != kvp.Value.GetType())
                         {
-                            convertedValue = Convert.ChangeType(kvp.Value, property.PropertyType);
+                            convertedValue = Convert.ChangeType(kvp.Value, property.PropertyType, CultureInfo.InvariantCulture);
                         }
 
                         property.SetValue(settingsInstance, convertedValue);
@@ -349,15 +466,62 @@ public class TPPAController : WebApiController
             try
             {
                 var saveMethod = settingsType.GetMethod("Save",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    BindingFlags.Public | BindingFlags.Instance);
                 if (saveMethod != null)
                 {
                     saveMethod.Invoke(settingsInstance, null);
+                }
+
+                // Reload settings from disk to ensure the in-memory cache is updated
+                // without requiring a restart
+                var reloadMethod = settingsType.GetMethod("Reload",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (reloadMethod != null)
+                {
+                    reloadMethod.Invoke(settingsInstance, null);
                 }
             }
             catch (Exception ex)
             {
                 Logger.Warning($"Could not explicitly save settings after reset: {ex.Message}");
+            }
+
+            // Sync reset values to the live PolarAlignment instruction instance
+            try
+            {
+                var paInstance = GetPolarAlignmentInstruction();
+                if (paInstance != null)
+                {
+                    var paType = paInstance.GetType();
+                    foreach (var kvp in defaults)
+                    {
+                        if (!SettingsToInstructionMap.TryGetValue(kvp.Key, out var instrPropName))
+                            continue;
+
+                        var instrProp = paType.GetProperty(instrPropName,
+                            BindingFlags.Public | BindingFlags.Instance);
+                        if (instrProp == null || !instrProp.CanWrite)
+                            continue;
+
+                        try
+                        {
+                            var converted = kvp.Value;
+                            if (kvp.Value != null && instrProp.PropertyType != kvp.Value.GetType())
+                                converted = Convert.ChangeType(kvp.Value, instrProp.PropertyType, CultureInfo.InvariantCulture);
+
+                            instrProp.SetValue(paInstance, converted);
+                            Logger.Info($"Reset PolarAlignment.{instrPropName} = {converted}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"Could not reset PolarAlignment.{instrPropName}: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error syncing PolarAlignment instruction reset: {ex.Message}", ex);
             }
 
             HttpContext.Response.StatusCode = 200;
