@@ -2930,7 +2930,7 @@ namespace TouchNStars.Server.Controllers
         /// <summary>
         /// Helper method to safely serialize a value to something JSON-serializable
         /// </summary>
-        private object SafeSerializeValue(object value)
+        private static object SafeSerializeValue(object value)
         {
             if (value == null)
                 return null;
@@ -4317,9 +4317,53 @@ namespace TouchNStars.Server.Controllers
                     {
                         if (prop.CanWrite && (prop.GetSetMethod(true)?.IsPublic ?? false) && prop.CanRead && (prop.GetGetMethod(true)?.IsPublic ?? false))
                         {
-                            triggerTable.Add(prop.Name, prop.GetValue(trigger));
+                            triggerTable.Add(prop.Name, SafeSerializeValue(prop.GetValue(trigger)));
                         }
                     }
+
+                    // Expand WaitLoopData progress fields for triggers with Data property
+                    try
+                    {
+                        var dataProperty = trigger.GetType().GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+                        if (dataProperty != null && dataProperty.CanRead)
+                        {
+                            var dataValue = dataProperty.GetValue(trigger);
+                            if (dataValue != null)
+                            {
+                                var dataType = dataValue.GetType();
+                                var currentAltProp = dataType.GetProperty("CurrentAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var targetAltProp = dataType.GetProperty("TargetAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var expectedTimeProp = dataType.GetProperty("ExpectedTime", BindingFlags.Public | BindingFlags.Instance);
+                                var comparatorProp = dataType.GetProperty("Comparator", BindingFlags.Public | BindingFlags.Instance);
+
+                                if (currentAltProp != null && targetAltProp != null && expectedTimeProp != null && comparatorProp != null)
+                                {
+                                    triggerTable["CurrentAltitude"] = currentAltProp.GetValue(dataValue);
+                                    triggerTable["TargetAltitude"] = targetAltProp.GetValue(dataValue);
+                                    triggerTable["ExpectedTime"] = expectedTimeProp.GetValue(dataValue);
+                                    triggerTable["Comparator"] = comparatorProp.GetValue(dataValue)?.ToString();
+                                }
+                            }
+                        }
+                    }
+                    catch { /* Silently ignore if Data property doesn't exist or can't be accessed */ }
+
+                    // RemainingTime is read-only for TimeSpanCondition/TimeCondition triggers
+                    if (trigger is TimeSpanCondition timeSpanTrigger)
+                    {
+                        triggerTable["RemainingTime"] = timeSpanTrigger.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+                    else if (trigger is TimeCondition timeTrigger)
+                    {
+                        triggerTable["RemainingTime"] = timeTrigger.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+
+                    // SafetyMonitorCondition - IsSafe has a protected setter
+                    if (trigger is SafetyMonitorCondition safetyTrigger)
+                    {
+                        triggerTable["IsSafe"] = safetyTrigger.IsSafe;
+                    }
+
                     triggers.Add(triggerTable);
                 }
                 catch (Exception ex)
@@ -4351,18 +4395,36 @@ namespace TouchNStars.Server.Controllers
                     {
                         if (prop.CanWrite && (prop.GetSetMethod(true)?.IsPublic ?? false) && prop.CanRead && (prop.GetGetMethod(true)?.IsPublic ?? false))
                         {
-                            ctable.Add(prop.Name, prop.GetValue(condition));
+                            ctable.Add(prop.Name, SafeSerializeValue(prop.GetValue(condition)));
                         }
                     }
 
-                    // Expand WaitLoopData progress fields that are excluded from JSON opt-in serialization
-                    if (condition is LoopForAltitudeBase altCond)
+                    // Expand WaitLoopData progress fields for conditions with Data property
+                    try
                     {
-                        ctable["CurrentAltitude"] = altCond.Data.CurrentAltitude;
-                        ctable["TargetAltitude"] = altCond.Data.TargetAltitude;
-                        ctable["ExpectedTime"] = altCond.Data.ExpectedTime;
-                        ctable["Comparator"] = altCond.Data.Comparator.ToString();
+                        var dataProperty = condition.GetType().GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+                        if (dataProperty != null && dataProperty.CanRead)
+                        {
+                            var dataValue = dataProperty.GetValue(condition);
+                            if (dataValue != null)
+                            {
+                                var dataType = dataValue.GetType();
+                                var currentAltProp = dataType.GetProperty("CurrentAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var targetAltProp = dataType.GetProperty("TargetAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var expectedTimeProp = dataType.GetProperty("ExpectedTime", BindingFlags.Public | BindingFlags.Instance);
+                                var comparatorProp = dataType.GetProperty("Comparator", BindingFlags.Public | BindingFlags.Instance);
+
+                                if (currentAltProp != null && targetAltProp != null && expectedTimeProp != null && comparatorProp != null)
+                                {
+                                    ctable["CurrentAltitude"] = currentAltProp.GetValue(dataValue);
+                                    ctable["TargetAltitude"] = targetAltProp.GetValue(dataValue);
+                                    ctable["ExpectedTime"] = expectedTimeProp.GetValue(dataValue);
+                                    ctable["Comparator"] = comparatorProp.GetValue(dataValue)?.ToString();
+                                }
+                            }
+                        }
                     }
+                    catch { /* Silently ignore if Data property doesn't exist or can't be accessed */ }
 
                     // TimeSpanCondition/TimeCondition - RemainingTime is read-only (no public setter)
                     if (condition is TimeSpanCondition timeSpanCond)
@@ -4423,17 +4485,51 @@ namespace TouchNStars.Server.Controllers
                     {
                         if ((prop.GetSetMethod(true)?.IsPublic ?? false) && prop.CanRead && (prop.GetGetMethod(true)?.IsPublic ?? false))
                         {
-                            it.Add(prop.Name, prop.GetValue(item));
+                            it.Add(prop.Name, SafeSerializeValue(prop.GetValue(item)));
                         }
                     }
 
-                    // Expand progress fields for items with wait/progress data
-                    if (item is LoopForAltitudeBase altItem)
+                    // Expand WaitLoopData progress fields for items with Data property
+                    try
                     {
-                        it["CurrentAltitude"] = altItem.Data.CurrentAltitude;
-                        it["TargetAltitude"] = altItem.Data.TargetAltitude;
-                        it["ExpectedTime"] = altItem.Data.ExpectedTime;
-                        it["Comparator"] = altItem.Data.Comparator.ToString();
+                        var dataProperty = item.GetType().GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+                        if (dataProperty != null && dataProperty.CanRead)
+                        {
+                            var dataValue = dataProperty.GetValue(item);
+                            if (dataValue != null)
+                            {
+                                var dataType = dataValue.GetType();
+                                var currentAltProp = dataType.GetProperty("CurrentAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var targetAltProp = dataType.GetProperty("TargetAltitude", BindingFlags.Public | BindingFlags.Instance);
+                                var expectedTimeProp = dataType.GetProperty("ExpectedTime", BindingFlags.Public | BindingFlags.Instance);
+                                var comparatorProp = dataType.GetProperty("Comparator", BindingFlags.Public | BindingFlags.Instance);
+
+                                if (currentAltProp != null && targetAltProp != null && expectedTimeProp != null && comparatorProp != null)
+                                {
+                                    it["CurrentAltitude"] = currentAltProp.GetValue(dataValue);
+                                    it["TargetAltitude"] = targetAltProp.GetValue(dataValue);
+                                    it["ExpectedTime"] = expectedTimeProp.GetValue(dataValue);
+                                    it["Comparator"] = comparatorProp.GetValue(dataValue)?.ToString();
+                                }
+                            }
+                        }
+                    }
+                    catch { /* Silently ignore if Data property doesn't exist or can't be accessed */ }
+
+                    // RemainingTime is read-only for TimeSpanCondition/TimeCondition items
+                    if (item is TimeSpanCondition timeSpanItem)
+                    {
+                        it["RemainingTime"] = timeSpanItem.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+                    else if (item is TimeCondition timeItem)
+                    {
+                        it["RemainingTime"] = timeItem.RemainingTime.ToString(@"hh\:mm\:ss");
+                    }
+
+                    // SafetyMonitorCondition - IsSafe has a protected setter
+                    if (item is SafetyMonitorCondition safetyItem)
+                    {
+                        it["IsSafe"] = safetyItem.IsSafe;
                     }
 
                     result.Add(it);
