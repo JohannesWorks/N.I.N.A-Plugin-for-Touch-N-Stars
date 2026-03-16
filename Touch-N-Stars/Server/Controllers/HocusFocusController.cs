@@ -2898,7 +2898,9 @@ public class HocusFocusController : WebApiController
                 { "Success", true },
                 { "SensorWidth", config.SensorWidth },
                 { "SensorHeight", config.SensorHeight },
-                { "SensorRotation", config.SensorRotation }
+                { "SensorRotation", config.SensorRotation },
+                { "TilterOuterRadius", config.TilterOuterRadius },
+                { "TilterThreadPitch", config.TilterThreadPitch }
             };
         }
         catch (Exception ex)
@@ -2927,6 +2929,8 @@ public class HocusFocusController : WebApiController
             double width = 36.0;
             double height = 24.0;
             double rotation = 0.0;
+            double outerRadius = 0.0;
+            double threadPitch = 0.0;
 
             if (root.TryGetProperty("sensorWidth", out var widthElement) && widthElement.TryGetDouble(out var widthVal))
                 width = widthVal;
@@ -2934,12 +2938,18 @@ public class HocusFocusController : WebApiController
                 height = heightVal;
             if (root.TryGetProperty("sensorRotation", out var rotationElement) && rotationElement.TryGetDouble(out var rotationVal))
                 rotation = Math.Clamp(rotationVal, 0, 359.9);
+            if (root.TryGetProperty("tilterOuterRadius", out var outerRadiusElement) && outerRadiusElement.TryGetDouble(out var outerRadiusVal))
+                outerRadius = outerRadiusVal;
+            if (root.TryGetProperty("tilterThreadPitch", out var threadPitchElement) && threadPitchElement.TryGetDouble(out var threadPitchVal))
+                threadPitch = threadPitchVal;
 
             var config = new TilterService.SensorConfigurationDTO
             {
                 SensorWidth = width,
                 SensorHeight = height,
-                SensorRotation = rotation
+                SensorRotation = rotation,
+                TilterOuterRadius = outerRadius,
+                TilterThreadPitch = threadPitch
             };
 
             var tilterService = TilterService.Instance;

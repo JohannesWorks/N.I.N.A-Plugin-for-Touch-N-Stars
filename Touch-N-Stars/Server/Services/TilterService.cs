@@ -90,6 +90,8 @@ public class TilterService
         public double SensorWidth { get; set; }   // in mm
         public double SensorHeight { get; set; }  // in mm
         public double SensorRotation { get; set; } // in degrees
+        public double TilterOuterRadius { get; set; } // in mm
+        public double TilterThreadPitch { get; set; } // in mm
     }
 
     public class ApplyTiltPlaneDTO
@@ -655,7 +657,9 @@ public class TilterService
         {
             SensorWidth = Settings.Default.SensorWidth,
             SensorHeight = Settings.Default.SensorHeight,
-            SensorRotation = Settings.Default.SensorRotation
+            SensorRotation = Settings.Default.SensorRotation,
+            TilterOuterRadius = Settings.Default.TilterOuterRadius,
+            TilterThreadPitch = Settings.Default.TilterThreadPitch
         };
     }
 
@@ -670,8 +674,10 @@ public class TilterService
             Settings.Default.SensorHeight = config.SensorHeight;
             // Clamp rotation to 0-359 degrees
             Settings.Default.SensorRotation = Math.Clamp(config.SensorRotation, 0, 359.9);
+            Settings.Default.TilterOuterRadius = config.TilterOuterRadius;
+            Settings.Default.TilterThreadPitch = config.TilterThreadPitch;
             CoreUtil.SaveSettings(Settings.Default);
-            Logger.Info($"TilterService: Sensor configuration updated - Width: {config.SensorWidth}mm, Height: {config.SensorHeight}mm, Rotation: {Settings.Default.SensorRotation}°");
+            Logger.Info($"TilterService: Sensor configuration updated - Width: {config.SensorWidth}mm, Height: {config.SensorHeight}mm, Rotation: {Settings.Default.SensorRotation}°, OuterRadius: {config.TilterOuterRadius}mm, ThreadPitch: {config.TilterThreadPitch}mm");
         }
         catch (Exception ex)
         {

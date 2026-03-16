@@ -153,5 +153,29 @@ namespace TouchNStars.Properties {
                 this["SensorRotation"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("60")]
+        public double TilterOuterRadius {
+            get {
+                return ((double)(this["TilterOuterRadius"]));
+            }
+            set {
+                this["TilterOuterRadius"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0")]
+        public double TilterThreadPitch {
+            get {
+                return ((double)(this["TilterThreadPitch"]));
+            }
+            set {
+                this["TilterThreadPitch"] = value;
+            }
+        }
     }
 }
