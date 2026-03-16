@@ -759,7 +759,9 @@ namespace TouchNStars.Server.Controllers
         /// POST /api/sequence/add - Add a new object (item, trigger, or condition) to the sequence
         /// targetId: ID of the target (item to add before/after, or container to add to)
         /// type: Type name of the object to add (automatically detects if it's an item, trigger, or condition)
-        /// insertAfter: if true, insert after target; if false, insert before (only for items, ignored for triggers/conditions)
+        /// insertAfter: if true, insert after target; if false, insert before (only for items, ignored for triggers/conditions).
+        ///              When targetId is a container: omit insertAfter to add INSIDE the container;
+        ///              provide insertAfter=true/false to add AFTER/BEFORE the container as a sibling.
         /// </summary>
         [Route(HttpVerbs.Post, "/sequence/add")]
         public ApiResponse AddObject([QueryField] string targetId, [QueryField] string type, [QueryField] bool? insertAfter = null)
@@ -1265,7 +1267,8 @@ namespace TouchNStars.Server.Controllers
         /// Internal method to add a new sequence item before/after a target item, or to a container (by ID)
         /// targetId: ID of the item (add before/after) or container (add to beginning)
         /// itemType: Full type name of the item to add
-        /// insertAfter: if true, insert after the target item; if false, insert before (ignored if target is a container)
+        /// insertAfter: if true, insert after the target item; if false, insert before.
+        ///              For container targets: omit (null) to add INSIDE; provide true/false to add AFTER/BEFORE as a sibling.
         /// </summary>
         private ApiResponse AddSequenceItem(string targetId, string itemType, bool? insertAfter = null)
         {
@@ -1359,7 +1362,11 @@ namespace TouchNStars.Server.Controllers
                     var targetContainer = targetItem as ISequenceContainer;
                     string createdItemId = null;
 
-                    if (isRegularContainer && targetContainer != null)
+                    // When insertAfter is explicitly provided for a container target, the caller wants to
+                    // insert the new item as a sibling (before/after the container) rather than inside it.
+                    bool addInsideContainer = isRegularContainer && targetContainer != null && insertAfter == null;
+
+                    if (addInsideContainer)
                     {
                         // Add to container at position 0 (beginning)
                         Application.Current.Dispatcher.Invoke(() =>
