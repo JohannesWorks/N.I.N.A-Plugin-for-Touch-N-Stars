@@ -1,8 +1,10 @@
 using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
+using NINA.Core.Enum;
 using NINA.Core.Utility;
 using System;
+using System.Globalization;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -85,6 +87,220 @@ public class UtilityController : WebApiController
         }
         logs.Reverse();
         return logs;
+    }
+
+    [Route(HttpVerbs.Get, "/loglevel")]
+    public object GetLogLevel()
+    {
+        try
+        {
+            var level = TouchNStars.Mediators.Profile.ActiveProfile.ApplicationSettings.LogLevel;
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "logLevel", level.ToString() },
+                { "availableLevels", System.Enum.GetNames(typeof(LogLevelEnum)) }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    [Route(HttpVerbs.Put, "/loglevel")]
+    public async Task<object> SetLogLevel()
+    {
+        try
+        {
+            var body = await HttpContext.GetRequestDataAsync<Dictionary<string, string>>();
+            if (body == null || !body.TryGetValue("logLevel", out var levelStr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object> { { "success", false }, { "error", "Missing 'logLevel' in request body" } };
+            }
+
+            if (!System.Enum.TryParse<LogLevelEnum>(levelStr.ToUpperInvariant(), out var newLevel))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object>
+                {
+                    { "success", false },
+                    { "error", $"Invalid log level '{levelStr}'. Valid values: {string.Join(", ", System.Enum.GetNames(typeof(LogLevelEnum)))}" }
+                };
+            }
+
+            TouchNStars.Mediators.Profile.ActiveProfile.ApplicationSettings.LogLevel = newLevel;
+            Logger.SetLogLevel(newLevel);
+            Logger.Info($"Log level changed to {newLevel} via Touch-N-Stars API");
+
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "logLevel", newLevel.ToString() }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    private static readonly string[] AvailableLanguages =
+    [
+        "en-GB", "en-US", "de-DE", "it-IT", "es-ES", "gl-ES",
+        "zh-CN", "zh-HK", "zh-TW", "fr-FR", "ru-RU", "pl-PL",
+        "nl-NL", "ja-JP", "tr-TR", "pt-PT", "el-GR", "cs-CZ",
+        "ca-ES", "nb-NO", "ko-KR"
+    ];
+
+    [Route(HttpVerbs.Get, "/language")]
+    public object GetLanguage()
+    {
+        try
+        {
+            var culture = TouchNStars.Mediators.Profile.ActiveProfile.ApplicationSettings.Culture;
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "language", culture },
+                { "availableLanguages", AvailableLanguages }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    [Route(HttpVerbs.Put, "/language")]
+    public async Task<object> SetLanguage()
+    {
+        try
+        {
+            var body = await HttpContext.GetRequestDataAsync<Dictionary<string, string>>();
+            if (body == null || !body.TryGetValue("language", out var cultureStr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object> { { "success", false }, { "error", "Missing 'language' in request body" } };
+            }
+
+            if (!AvailableLanguages.Contains(cultureStr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object>
+                {
+                    { "success", false },
+                    { "error", $"Invalid language '{cultureStr}'. Valid values: {string.Join(", ", AvailableLanguages)}" }
+                };
+            }
+
+            var cultureInfo = new CultureInfo(cultureStr);
+            TouchNStars.Mediators.Profile.ChangeLocale(cultureInfo);
+            Logger.Info($"Language changed to {cultureStr} via Touch-N-Stars API");
+
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "language", cultureStr }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    [Route(HttpVerbs.Get, "/polling-interval")]
+    public object GetPollingInterval()
+    {
+        try
+        {
+            var interval = TouchNStars.Mediators.Profile.ActiveProfile.ApplicationSettings.DevicePollingInterval;
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "pollingInterval", interval }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    [Route(HttpVerbs.Put, "/polling-interval")]
+    public async Task<object> SetPollingInterval()
+    {
+        try
+        {
+            var body = await HttpContext.GetRequestDataAsync<Dictionary<string, string>>();
+            if (body == null || !body.TryGetValue("pollingInterval", out var intervalStr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object> { { "success", false }, { "error", "Missing 'pollingInterval' in request body" } };
+            }
+
+            if (!double.TryParse(intervalStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var newInterval) || newInterval <= 0)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new Dictionary<string, object>
+                {
+                    { "success", false },
+                    { "error", "Invalid 'pollingInterval': must be a positive number (seconds)" }
+                };
+            }
+
+            TouchNStars.Mediators.Profile.ActiveProfile.ApplicationSettings.DevicePollingInterval = newInterval;
+            Logger.Info($"Device polling interval changed to {newInterval}s via Touch-N-Stars API");
+
+            return new Dictionary<string, object>
+            {
+                { "success", true },
+                { "pollingInterval", newInterval },
+                { "note", "Change takes effect when devices are reconnected" }
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
     }
 
     [Route(HttpVerbs.Get, "/get-api-port")]
