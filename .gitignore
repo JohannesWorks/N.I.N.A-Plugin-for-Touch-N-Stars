@@ -101,3 +101,4 @@ Accord.dll.config
 *.zip
 .vscode/tasks.json
 Touch-N-Stars/.vscode/tasks.json
+.claude/
