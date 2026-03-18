@@ -60,7 +60,8 @@ namespace TouchNStars.Server {
                 .WithController<HocusFocusController>()  // HocusFocus plugin integration
                 .WithController<TPPAController>()        // TPPA / PolarAlignment plugin integration
                 .WithController<PinsController>()        // PINS device management
-                .WithController<SequenceController>());  // Sequence item discovery and management
+                .WithController<SequenceController>()    // Sequence item discovery and management
+                .WithController<TenMicronController>()); // 10micron model builder integration
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 

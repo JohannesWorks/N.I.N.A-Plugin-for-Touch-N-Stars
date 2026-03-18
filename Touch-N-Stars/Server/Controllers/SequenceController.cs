@@ -3648,7 +3648,7 @@ namespace TouchNStars.Server.Controllers
         /// Helper method to get the main sequence container from the sequence mediator.
         /// Uses reflection to navigate through the internal structure.
         /// </summary>
-        private static ISequenceRootContainer GetMainContainer()
+        internal static ISequenceRootContainer GetMainContainer()
         {
             try
             {
