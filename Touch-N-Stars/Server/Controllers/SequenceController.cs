@@ -460,7 +460,7 @@ namespace TouchNStars.Server.Controllers
                 // Use NINA's SequenceJsonConverter to properly deserialize the sequence
                 var converter = new SequenceJsonConverter(factory);
                 string jsonContent = File.ReadAllText(filePath);
-                var container = converter.Deserialize(jsonContent, filePath);
+                var container = converter.Deserialize(jsonContent);
 
                 if (container == null)
                 {
