@@ -1,0 +1,5 @@
+[
+  { "Name": "indi_deepskydata_fp", "Label": "DeepSkyDad Flat Panel", "Type": "flatpanel" },
+  { "Name": "indi_gemini_flatpanel", "Label": "Gemini Flat Panel", "Type": "flatpanel" },
+  { "Name": "indi_simulator_lightpanel", "Label": "Simulator Light Panel", "Type": "flatpanel" }
+]

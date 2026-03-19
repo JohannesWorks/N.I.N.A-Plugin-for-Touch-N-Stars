@@ -1,0 +1,6 @@
+[
+  { "Name": "indi_mbox_weather", "Label": "MBox Weather", "Type": "weather" },
+  { "Name": "indi_simulator_weather", "Label": "Simulator Weather", "Type": "weather" },
+  { "Name": "indi_sqm_weather", "Label": "SQM Weather", "Type": "weather" },
+  { "Name": "indi_uranus_weather", "Label": "Uranus Weather", "Type": "weather" }
+]

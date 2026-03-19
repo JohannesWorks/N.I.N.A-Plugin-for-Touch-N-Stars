@@ -4,8 +4,6 @@ using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace TouchNStars.Server.Controllers;
@@ -112,23 +110,13 @@ public class INDIController : WebApiController
     }
 
     /// <summary>
-    /// Helper method to get drivers by type using hardcoded driver lists
+    /// Helper method to get drivers by type
     /// </summary>
     private ApiResponse GetDriversByType(string driverType)
     {
         try
         {
-            var drivers = driverType switch
-            {
-                "focuser" => INDIFocusDrivers.Drivers,
-                "filterwheel" => INDIFilterWheelDrivers.Drivers,
-                "rotator" => INDIRotatorDrivers.Drivers,
-                "telescope" => INDIMountDrivers.Drivers,
-                "weather" => INDIWeatherDrivers.Drivers,
-                "switches" => INDISwitchDrivers.Drivers,
-                "flatpanel" => INDIFlatPanelDrivers.Drivers,
-                _ => new List<INDIDriver>()
-            };
+            var drivers = INDIDriverRegistry.GetDrivers(driverType);
 
             HttpContext.Response.StatusCode = 200;
             return new ApiResponse

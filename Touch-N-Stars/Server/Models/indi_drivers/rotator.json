@@ -1,0 +1,6 @@
+[
+  { "Name": "indi_asi_rotator", "Label": "ZWO ASI Rotator", "Type": "rotator" },
+  { "Name": "indi_falcon_rotator", "Label": "Falcon Rotator", "Type": "rotator" },
+  { "Name": "indi_falconv2_rotator", "Label": "Falcon v2 Rotator", "Type": "rotator" },
+  { "Name": "indi_simulator_rotator", "Label": "Simulator Rotator", "Type": "rotator" }
+]
