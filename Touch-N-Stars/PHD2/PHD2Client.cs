@@ -1530,7 +1530,7 @@ namespace TouchNStars.PHD2
                 }
             }
 
-            return request.ToString(Formatting.None);
+            return JsonConvert.SerializeObject(request);
         }
 
         private static bool IsFailedResponse(JObject response)
