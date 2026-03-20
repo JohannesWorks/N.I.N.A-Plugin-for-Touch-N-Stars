@@ -4,6 +4,7 @@ using EmbedIO.WebApi;
 using NINA.Core.Utility;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using TouchNStars.PHD2;
 using TouchNStars.Server.Models;
@@ -231,7 +232,7 @@ public class PHD2Controller : WebApiController
         {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            
+
             if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
             {
                 HttpContext.Response.StatusCode = 400;
@@ -245,7 +246,7 @@ public class PHD2Controller : WebApiController
             }
 
             string profileName = requestData["name"].ToString();
-            
+
             if (string.IsNullOrEmpty(profileName))
             {
                 HttpContext.Response.StatusCode = 400;
@@ -304,7 +305,7 @@ public class PHD2Controller : WebApiController
         {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            
+
             if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
             {
                 HttpContext.Response.StatusCode = 400;
@@ -318,7 +319,7 @@ public class PHD2Controller : WebApiController
             }
 
             string profileName = requestData["name"].ToString();
-            
+
             if (string.IsNullOrEmpty(profileName))
             {
                 HttpContext.Response.StatusCode = 400;
@@ -377,7 +378,7 @@ public class PHD2Controller : WebApiController
         {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            
+
             if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
             {
                 HttpContext.Response.StatusCode = 400;
@@ -391,7 +392,7 @@ public class PHD2Controller : WebApiController
             }
 
             string newName = requestData["name"].ToString();
-            
+
             if (string.IsNullOrEmpty(newName))
             {
                 HttpContext.Response.StatusCode = 400;
@@ -450,7 +451,7 @@ public class PHD2Controller : WebApiController
         {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            
+
             if (requestData == null || !requestData.ContainsKey("id") || requestData["id"] == null)
             {
                 HttpContext.Response.StatusCode = 400;
@@ -955,67 +956,68 @@ public class PHD2Controller : WebApiController
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/calibration/focal-length")]
     public async Task<ApiResponse> GetPHD2FocalLength()
+    {
+        try
         {
-            try
-            {
-                EnsurePHD2ServicesInitialized();
-                var focalLength = await phd2Service.GetFocalLengthAsync();
+            EnsurePHD2ServicesInitialized();
+            var focalLength = await phd2Service.GetFocalLengthAsync();
 
-                return new ApiResponse
-                {
-                    Success = true,
-                    Response = new { FocalLength = focalLength },
-                    StatusCode = 200,
-                    Type = "PHD2FocalLength"
-                };
-            }
-            catch (Exception ex)
+            return new ApiResponse
             {
-                Logger.Error(ex);
-                HttpContext.Response.StatusCode = 500;
+                Success = true,
+                Response = new { FocalLength = focalLength },
+                StatusCode = 200,
+                Type = "PHD2FocalLength"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/focal-length - Set focal length
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/calibration/focal-length")]
+    public async Task<ApiResponse> SetPHD2FocalLength()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("focalLength") || requestData["focalLength"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
                 return new ApiResponse
                 {
                     Success = false,
-                    Error = ex.Message,
-                    StatusCode = 500,
+                    Error = "focalLength parameter is required",
+                    StatusCode = 400,
                     Type = "Error"
                 };
             }
-        }
 
-        /// <summary>
-        /// PUT /api/phd2/focal-length - Set focal length
-        /// </summary>
-        [Route(HttpVerbs.Put, "/phd2/calibration/focal-length")]
-        public async Task<ApiResponse> SetPHD2FocalLength()
-        {
-            try
+            if (!int.TryParse(requestData["focalLength"].ToString(), out int focalLength))
             {
-                EnsurePHD2ServicesInitialized();
-                var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                if (requestData == null || !requestData.ContainsKey("focalLength") || requestData["focalLength"] == null)
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
                 {
-                    HttpContext.Response.StatusCode = 400;
-                    return new ApiResponse
-                    {
-                        Success = false,
-                        Error = "focalLength parameter is required",
-                        StatusCode = 400,
-                        Type = "Error"
-                    };
-                }
-
-                if (!int.TryParse(requestData["focalLength"].ToString(), out int focalLength))
-                {
-                    HttpContext.Response.StatusCode = 400;
-                    return new ApiResponse
-                    {
-                        Success = false,
-                        Error = "focalLength must be a valid integer",
-                        StatusCode = 400,
-                        Type = "Error"
-                    };
-                }            await phd2Service.SetFocalLengthAsync(focalLength);
+                    Success = false,
+                    Error = "focalLength must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetFocalLengthAsync(focalLength);
 
             return new ApiResponse
             {
@@ -1642,6 +1644,43 @@ public class PHD2Controller : WebApiController
                 },
                 StatusCode = 200,
                 Type = "PHD2StarSelection"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/star-positions - Get primary and secondary guide star positions
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/star-positions")]
+    public async Task<ApiResponse> GetPHD2StarPositions()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+
+            var secondaryStars = await phd2Service.GetSecondaryStarsAsync();
+            var secondary = secondaryStars
+                .Select(s => new { X = s[0], Y = s[1] })
+                .ToList();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { Secondary = secondary },
+                StatusCode = 200,
+                Type = "PHD2StarPositions"
             };
         }
         catch (Exception ex)

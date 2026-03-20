@@ -1539,6 +1539,25 @@ namespace TouchNStars.PHD2
             };
         }
 
+        public List<double[]> GetSecondaryStars()
+        {
+            CheckConnected();
+
+            var result = Call("get_secondary_stars");
+            var arr = result["result"] as JArray;
+            var stars = new List<double[]>();
+            if (arr != null)
+            {
+                foreach (var item in arr)
+                {
+                    var x = (double)item["x"];
+                    var y = (double)item["y"];
+                    stars.Add(new[] { x, y });
+                }
+            }
+            return stars;
+        }
+
         private bool IsGuiding()
         {
             return AppState == "Guiding" || AppState == "LostLock";

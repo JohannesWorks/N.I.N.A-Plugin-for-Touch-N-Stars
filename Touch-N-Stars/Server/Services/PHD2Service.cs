@@ -3146,6 +3146,29 @@ namespace TouchNStars.Server.Services
                 }
             });
         }
+
+        public async Task<List<double[]>> GetSecondaryStarsAsync()
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                            return new List<double[]>();
+
+                        return client.GetSecondaryStars();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"Failed to get PHD2 secondary stars: {ex.Message}");
+                    return new List<double[]>();
+                }
+            });
+        }
+
         public async Task<Dictionary<string, List<CameraInfo>>> GetAllCameraIdsAsync()
         {
             return await Task.Run(() =>
