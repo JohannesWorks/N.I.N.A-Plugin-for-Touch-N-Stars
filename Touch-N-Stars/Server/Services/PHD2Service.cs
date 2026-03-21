@@ -3147,6 +3147,46 @@ namespace TouchNStars.Server.Services
             });
         }
 
+        public async Task<object> GetCalibrationDataAsync()
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                            throw new InvalidOperationException("PHD2 not connected");
+
+                        var result = client.GetCalibrationData("Mount");
+                        if (result == null)
+                            return (object)new { Calibrated = false };
+
+                        bool calibrated = result["calibrated"] != null && (bool)result["calibrated"];
+                        if (!calibrated)
+                            return (object)new { Calibrated = false };
+
+                        return (object)new
+                        {
+                            Calibrated = true,
+                            XAngle = result["xAngle"] != null ? (double)result["xAngle"] : 0,
+                            XRate = result["xRate"] != null ? (double)result["xRate"] : 0,
+                            XParity = result["xParity"] != null ? (string)result["xParity"] : "",
+                            YAngle = result["yAngle"] != null ? (double)result["yAngle"] : 0,
+                            YRate = result["yRate"] != null ? (double)result["yRate"] : 0,
+                            YParity = result["yParity"] != null ? (string)result["yParity"] : "",
+                            Declination = result["declination"] != null ? (double)result["declination"] : 0
+                        };
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to get PHD2 calibration data: {ex.Message}");
+                    throw;
+                }
+            });
+        }
+
         public async Task<List<double[]>> GetSecondaryStarsAsync()
         {
             return await Task.Run(() =>

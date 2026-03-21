@@ -1067,7 +1067,7 @@ public class PHD2Controller : WebApiController
             object starImageInfo = null;
             try
             {
-                if (phd2Service.IsConnected && (status?.AppState == "Guiding" || status?.AppState == "Looping"))
+                if (phd2Service.IsConnected && (status?.AppState == "Guiding" || status?.AppState == "Looping" || status?.AppState == "Calibrating" || status?.AppState == "Selected" || status?.AppState == "Paused"))
                 {
                     var starImage = await phd2Service.GetStarImageAsync(15); // Get minimal size star image for info
                     if (starImage != null)
@@ -1126,6 +1126,13 @@ public class PHD2Controller : WebApiController
                 Settling = settling,
                 PixelScale = pixelScale,
                 StarImage = starImageInfo,
+                StarInfo = status?.CurrentStar != null ? new
+                {
+                    SNR = status.CurrentStar.SNR,
+                    HFD = status.CurrentStar.HFD,
+                    StarMass = status.CurrentStar.StarMass,
+                    LastUpdate = status.CurrentStar.LastUpdate
+                } : null,
                 Capabilities = new
                 {
                     CanGuide = phd2Service.IsConnected && (status?.AppState == "Guiding" || status?.AppState == "Looping" || status?.AppState == "Stopped"),
@@ -2453,6 +2460,44 @@ public class PHD2Controller : WebApiController
                 StatusCode = 500,
                 Type = "Error"
             };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/calibration-data - Get PHD2 mount calibration data
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration-data")]
+    public async Task<ApiResponse> GetPHD2CalibrationData()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var data = await phd2Service.GetCalibrationDataAsync();
+            return new ApiResponse { Success = true, Response = data, StatusCode = 200, Type = "PHD2CalibrationData" };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error getting PHD2 calibration data: {ex}");
+            return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
+        }
+    }
+
+    /// <summary>
+    /// POST /api/phd2/clear-calibration - Clear PHD2 mount calibration
+    /// </summary>
+    [Route(HttpVerbs.Post, "/phd2/clear-calibration")]
+    public async Task<ApiResponse> ClearPHD2Calibration()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            await phd2Service.ClearMountCalibrationAsync();
+            return new ApiResponse { Success = true, Response = "Calibration cleared", StatusCode = 200, Type = "PHD2ClearCalibration" };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error clearing PHD2 calibration: {ex}");
+            return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
         }
     }
 
