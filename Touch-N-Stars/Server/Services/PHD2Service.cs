@@ -3146,6 +3146,69 @@ namespace TouchNStars.Server.Services
                 }
             });
         }
+
+        public async Task<object> GetCalibrationDataAsync()
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                            throw new InvalidOperationException("PHD2 not connected");
+
+                        var result = client.GetCalibrationData("Mount");
+                        if (result == null)
+                            return (object)new { Calibrated = false };
+
+                        bool calibrated = result["calibrated"]?.ToObject<bool?>() == true;
+                        if (!calibrated)
+                            return (object)new { Calibrated = false };
+
+                        return (object)new
+                        {
+                            Calibrated = true,
+                            XAngle = result["xAngle"]?.ToObject<double?>() ?? 0,
+                            XRate = result["xRate"]?.ToObject<double?>() ?? 0,
+                            XParity = result["xParity"]?.ToObject<string>() ?? "",
+                            YAngle = result["yAngle"]?.ToObject<double?>() ?? 0,
+                            YRate = result["yRate"]?.ToObject<double?>() ?? 0,
+                            YParity = result["yParity"]?.ToObject<string>() ?? "",
+                            Declination = result["declination"]?.ToObject<double?>() ?? 0
+                        };
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to get PHD2 calibration data: {ex.Message}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<List<double[]>> GetSecondaryStarsAsync()
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                            return new List<double[]>();
+
+                        return client.GetSecondaryStars();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"Failed to get PHD2 secondary stars: {ex.Message}");
+                    return new List<double[]>();
+                }
+            });
+        }
+
         public async Task<Dictionary<string, List<CameraInfo>>> GetAllCameraIdsAsync()
         {
             return await Task.Run(() =>

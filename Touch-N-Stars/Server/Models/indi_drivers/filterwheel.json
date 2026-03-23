@@ -1,0 +1,4 @@
+[
+  { "Name": "indi_pegasusindigo_wheel", "Label": "Pegasus Indigo Filter Wheel", "Type": "filterwheel" },
+  { "Name": "indi_simulator_wheel", "Label": "Simulator Filter Wheel", "Type": "filterwheel" }
+]

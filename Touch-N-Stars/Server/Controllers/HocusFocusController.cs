@@ -208,7 +208,8 @@ public class HocusFocusController : WebApiController
                                     .Where(p => p.ContainsKey("X"))
                                     .Select(p =>
                                     {
-                                        if (double.TryParse(p["X"].ToString(), out var x)) return x;
+                                        if (p["X"] is double xd) return xd;
+                                        if (double.TryParse(p["X"]?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x)) return x;
                                         return 0.0;
                                     })
                                     .DefaultIfEmpty(0.0)
@@ -217,7 +218,8 @@ public class HocusFocusController : WebApiController
                                     .Where(p => p.ContainsKey("X"))
                                     .Select(p =>
                                     {
-                                        if (double.TryParse(p["X"].ToString(), out var x)) return x;
+                                        if (p["X"] is double xd) return xd;
+                                        if (double.TryParse(p["X"]?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x)) return x;
                                         return 0.0;
                                     })
                                     .DefaultIfEmpty(0.0)

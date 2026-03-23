@@ -40,6 +40,9 @@
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Server\Models\indi_drivers\*.json" />
+  </ItemGroup>
   <PropertyGroup />
   <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="!$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))">
     <Exec Command="&#xD;&#xA;if not exist &quot;%25localappdata%25\NINA\Plugins\3.0.0&quot; (&#xD;&#xA;  echo &quot;Creating $(PlatformName) Plugins folder&quot;&#xD;&#xA;  mkdir &quot;%25localappdata%25\NINA\Plugins\3.0.0&quot;&#xD;&#xA;)&#xD;&#xA;if not exist &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot; (&#xD;&#xA;  echo &quot;Creating $(PlatformName) Plugins Touch 'N' Stars folder&quot;&#xD;&#xA;  mkdir &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot;&#xD;&#xA;)&#xD;&#xA;&#xD;&#xA;echo &quot;Copying $(PlatformName) $(TargetFileName)&quot;&#xD;&#xA;xcopy &quot;$(TargetPath)&quot; &quot;%25localappdata%25\NINA\Plugins\3.0.0\Touch 'N' Stars&quot; /h/i/c/k/e/r/y&#xD;&#xA;  " />

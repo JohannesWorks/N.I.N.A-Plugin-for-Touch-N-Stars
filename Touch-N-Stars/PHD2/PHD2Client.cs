@@ -79,6 +79,7 @@ namespace TouchNStars.PHD2
         public SettleProgress SettleProgress { get; set; }
         public StarLostInfo LastStarLost { get; set; }
         public GuideStarInfo CurrentStar { get; set; }
+        public CalibrationStepInfo CalibrationStep { get; set; }
     }
 
     public class GuideStarInfo
@@ -87,6 +88,16 @@ namespace TouchNStars.PHD2
         public double HFD { get; set; }
         public double StarMass { get; set; }
         public DateTime LastUpdate { get; set; }
+    }
+
+    public class CalibrationStepInfo
+    {
+        public string Direction { get; set; }
+        public int Step { get; set; }
+        public string Message { get; set; }
+        public double Dist { get; set; }
+        public double Dx { get; set; }
+        public double Dy { get; set; }
     }
 
     public class StarImageData
@@ -236,6 +247,7 @@ namespace TouchNStars.PHD2
         public string PHDSubver { get; private set; }
         public StarLostInfo LastStarLost { get; private set; }
         public GuideStarInfo CurrentStar { get; private set; } = new GuideStarInfo();
+        public CalibrationStepInfo LastCalibrationStep { get; private set; }
         private SettleProgress settle;
 
         public PHD2Client(string hostname = "localhost", uint instance = 1)
@@ -422,12 +434,48 @@ namespace TouchNStars.PHD2
                     }
                     break;
 
+                case "LoopingExposures":
+                    // PHD2 includes SNR/HFD/StarMass in LoopingExposures when a star is found
+                    if (eventObj["StarMass"] != null && CurrentStar != null)
+                    {
+                        if (eventObj["SNR"] != null) CurrentStar.SNR = (double)eventObj["SNR"];
+                        if (eventObj["HFD"] != null) CurrentStar.HFD = (double)eventObj["HFD"];
+                        CurrentStar.StarMass = (double)eventObj["StarMass"];
+                        CurrentStar.LastUpdate = DateTime.Now;
+                    }
+                    break;
+
                 case "GuidingStopped":
                     AppState = "Stopped";
                     break;
 
                 case "Paused":
                     AppState = "Paused";
+                    break;
+
+                case "StarSelected":
+                    AppState = "Selected";
+                    break;
+
+                case "Calibrating":
+                    AppState = "Calibrating";
+                    LastCalibrationStep = new CalibrationStepInfo
+                    {
+                        Direction = (string)eventObj["dir"],
+                        Step = eventObj["step"] != null ? (int)eventObj["step"] : 0,
+                        Message = (string)eventObj["State"],
+                        Dist = eventObj["dist"] != null ? (double)eventObj["dist"] : 0,
+                        Dx = eventObj["dx"] != null ? (double)eventObj["dx"] : 0,
+                        Dy = eventObj["dy"] != null ? (double)eventObj["dy"] : 0
+                    };
+                    break;
+
+                case "CalibrationComplete":
+                    LastCalibrationStep = null;
+                    break;
+
+                case "CalibrationFailed":
+                    LastCalibrationStep = null;
                     break;
 
                 case "StarLost":
@@ -1160,7 +1208,8 @@ namespace TouchNStars.PHD2
                     HFD = CurrentStar.HFD,
                     StarMass = CurrentStar.StarMass,
                     LastUpdate = CurrentStar.LastUpdate
-                } : null
+                } : null,
+                CalibrationStep = LastCalibrationStep
             };
         }
 
@@ -1537,6 +1586,32 @@ namespace TouchNStars.PHD2
                 StarPosY = (double)resultData["star_pos"][1],
                 Pixels = (string)resultData["pixels"]
             };
+        }
+
+        public JObject GetCalibrationData(string which = "Mount")
+        {
+            CheckConnected();
+            var result = Call("get_calibration_data", new JValue(which));
+            return result["result"] as JObject;
+        }
+
+        public List<double[]> GetSecondaryStars()
+        {
+            CheckConnected();
+
+            var result = Call("get_secondary_stars");
+            var arr = result["result"] as JArray;
+            var stars = new List<double[]>();
+            if (arr != null)
+            {
+                foreach (var item in arr)
+                {
+                    var x = (double)item["x"];
+                    var y = (double)item["y"];
+                    stars.Add(new[] { x, y });
+                }
+            }
+            return stars;
         }
 
         private bool IsGuiding()

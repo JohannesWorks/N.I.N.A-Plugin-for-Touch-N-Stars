@@ -1,0 +1,8 @@
+[
+  { "Name": "indi_celestron_dewpower", "Label": "Celestron Dew Power", "Type": "switches" },
+  { "Name": "indi_pegasus_ppb", "Label": "Pegasus PPB", "Type": "switches" },
+  { "Name": "indi_pegasus_ppba", "Label": "Pegasus PPB Advanced", "Type": "switches" },
+  { "Name": "indi_pegasus_spb", "Label": "Pegasus SPB", "Type": "switches" },
+  { "Name": "indi_pegasus_upb", "Label": "Pegasus UPB", "Type": "switches" },
+  { "Name": "indi_wanderer_dew_terminator", "Label": "Wanderer Dew Terminator", "Type": "switches" }
+]

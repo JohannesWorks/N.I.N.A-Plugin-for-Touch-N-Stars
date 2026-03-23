@@ -2162,20 +2162,6 @@ namespace TouchNStars.Server.Controllers
                             };
                         }
 
-                        // Validate that the container type allows conditions
-                        // Only Sequential, Parallel, and Target containers can have conditions
-                        var containerTypeName = item.GetType().Name;
-                        var allowedContainers = new[] { "SequentialContainer", "ParallelContainer", "TargetContainer" };
-                        if (!allowedContainers.Contains(containerTypeName))
-                        {
-                            HttpContext.Response.StatusCode = 400;
-                            return new ApiResponse
-                            {
-                                Success = false,
-                                Error = $"Container type '{containerTypeName}' is not allowed to have conditions. Only Sequential, Parallel, and Target containers support conditions.",
-                            };
-                        }
-
                         container = cont;
                     }
 
@@ -3007,17 +2993,39 @@ namespace TouchNStars.Server.Controllers
                 return strValue;
             }
 
-            // For complex objects, return string representation
+            // Handle InputCoordinates - return as structured object so the front-end
+            // can access RAHours, RAMinutes, RASeconds, DecDegrees, etc. directly
+            // instead of having to regex-parse the locale-sensitive ToString() output.
+            if (value is NINA.Astrometry.InputCoordinates inputCoords)
+            {
+                return new Hashtable
+                {
+                    { "RAHours",    inputCoords.RAHours },
+                    { "RAMinutes",  inputCoords.RAMinutes },
+                    { "RASeconds",  inputCoords.RASeconds },
+                    { "NegativeDec", inputCoords.NegativeDec },
+                    { "DecDegrees", inputCoords.DecDegrees },
+                    { "DecMinutes", inputCoords.DecMinutes },
+                    { "DecSeconds", inputCoords.DecSeconds },
+                };
+            }
+
+            // Handle InputTarget - return as structured object so PositionAngle
+            // is a proper double (serialized by Newtonsoft with InvariantCulture)
+            // rather than an interpolated string that uses the current locale.
+            if (value is NINA.Astrometry.InputTarget inputTarget)
+            {
+                return new Hashtable
+                {
+                    { "TargetName",       inputTarget.TargetName },
+                    { "PositionAngle",    inputTarget.PositionAngle },
+                    { "InputCoordinates", SafeSerializeValue(inputTarget.InputCoordinates) },
+                };
+            }
+
+            // Fallback: return string representation for unknown complex types
             try
             {
-                // If it's a numeric type, use invariant culture formatting
-                if (value is double d)
-                    return d.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                if (value is decimal dec)
-                    return dec.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                if (value is float f)
-                    return f.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
                 return value.ToString();
             }
             catch
