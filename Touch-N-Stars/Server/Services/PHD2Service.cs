@@ -3162,20 +3162,20 @@ namespace TouchNStars.Server.Services
                         if (result == null)
                             return (object)new { Calibrated = false };
 
-                        bool calibrated = result["calibrated"] != null && (bool)result["calibrated"];
+                        bool calibrated = result["calibrated"]?.ToObject<bool?>() == true;
                         if (!calibrated)
                             return (object)new { Calibrated = false };
 
                         return (object)new
                         {
                             Calibrated = true,
-                            XAngle = result["xAngle"] != null ? (double)result["xAngle"] : 0,
-                            XRate = result["xRate"] != null ? (double)result["xRate"] : 0,
-                            XParity = result["xParity"] != null ? (string)result["xParity"] : "",
-                            YAngle = result["yAngle"] != null ? (double)result["yAngle"] : 0,
-                            YRate = result["yRate"] != null ? (double)result["yRate"] : 0,
-                            YParity = result["yParity"] != null ? (string)result["yParity"] : "",
-                            Declination = result["declination"] != null ? (double)result["declination"] : 0
+                            XAngle = result["xAngle"]?.ToObject<double?>() ?? 0,
+                            XRate = result["xRate"]?.ToObject<double?>() ?? 0,
+                            XParity = result["xParity"]?.ToObject<string>() ?? "",
+                            YAngle = result["yAngle"]?.ToObject<double?>() ?? 0,
+                            YRate = result["yRate"]?.ToObject<double?>() ?? 0,
+                            YParity = result["yParity"]?.ToObject<string>() ?? "",
+                            Declination = result["declination"]?.ToObject<double?>() ?? 0
                         };
                     }
                 }
