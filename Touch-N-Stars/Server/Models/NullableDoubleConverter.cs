@@ -19,7 +19,7 @@ public class NullableDoubleConverter : JsonConverter<double?>
             {
                 return null;
             }
-            if (double.TryParse(stringValue, out double result))
+            if (double.TryParse(stringValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double result))
             {
                 return result;
             }
