@@ -18,7 +18,7 @@ public class LocationController : WebApiController
     /// <summary>
     /// GET /api/location
     /// Returns both the profile location and (when a mount is connected) the
-    /// mount's reported site location in a single response.
+    /// mount's reported site location, plus time information, in a single response.
     /// </summary>
     [Route(HttpVerbs.Get, "/location")]
     public object GetLocation()
@@ -27,12 +27,14 @@ public class LocationController : WebApiController
         {
             var profileLocation = GetProfileLocation();
             var mountLocation = GetMountLocation();
+            var timeInfo = GetTimeInfoData();
 
             return new Dictionary<string, object>
             {
                 { "success", true },
                 { "profile", profileLocation },
-                { "mount", mountLocation }
+                { "mount", mountLocation },
+                { "time", timeInfo }
             };
         }
         catch (Exception ex)
@@ -45,6 +47,57 @@ public class LocationController : WebApiController
                 { "error", ex.Message }
             };
         }
+    }
+
+    /// <summary>
+    /// GET /api/location/time
+    /// Returns the backend (PC) UTC time, the mount's reported UTC time (when connected),
+    /// and whether the NINA profile has time-sync-to-mount enabled.
+    /// </summary>
+    [Route(HttpVerbs.Get, "/location/time")]
+    public object GetTimeInfo()
+    {
+        try
+        {
+            return GetTimeInfoData();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>
+            {
+                { "success", false },
+                { "error", ex.Message }
+            };
+        }
+    }
+
+    private object GetTimeInfoData()
+    {
+        bool timeSyncEnabled = TouchNStars.Mediators.Profile.ActiveProfile.TelescopeSettings.TimeSync;
+
+        var info = TouchNStars.Mediators.Telescope.GetInfo();
+        bool mountConnected = info != null && info.Connected;
+
+        string mountUtc = null;
+        if (mountConnected)
+        {
+            var device = TouchNStars.Mediators.Telescope.GetDevice() as ITelescope;
+            if (device != null && device.Connected)
+            {
+                try { mountUtc = device.UTCDate.ToString("O"); }
+                catch { /* driver may not implement UTCDate */ }
+            }
+        }
+
+        return new Dictionary<string, object>
+        {
+            { "backendUtc", DateTime.UtcNow.ToString("O") },
+            { "mountUtc", (object)mountUtc },
+            { "timeSyncEnabled", timeSyncEnabled },
+            { "mountConnected", mountConnected }
+        };
     }
 
     /// <summary>
