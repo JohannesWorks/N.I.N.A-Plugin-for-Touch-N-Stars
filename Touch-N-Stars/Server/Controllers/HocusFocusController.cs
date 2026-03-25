@@ -1133,6 +1133,90 @@ public class HocusFocusController : WebApiController
         }
     }
 
+    [Route(HttpVerbs.Get, "/hocusfocus/autofocus/last-run")]
+    public object GetLastAutoFocusRun()
+    {
+        try
+        {
+            var hocusFocusVMType = Type.GetType("NINA.Joko.Plugins.HocusFocus.AutoFocus.HocusFocusVM, NINA.Joko.Plugins.HocusFocus");
+            if (hocusFocusVMType == null)
+            {
+                HttpContext.Response.StatusCode = 503;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "HocusFocus plugin not loaded" }
+                };
+            }
+
+            var currentProperty = hocusFocusVMType.GetProperty("Current",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            var currentVM = currentProperty?.GetValue(null);
+            if (currentVM == null)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "No AutoFocus run has been started yet in this session" }
+                };
+            }
+
+            var lastReport = currentVM.GetType().GetProperty("LastReport")?.GetValue(currentVM);
+            if (lastReport == null)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new Dictionary<string, object>()
+                {
+                    { "Success", false },
+                    { "Error", "No AutoFocus run has completed yet" }
+                };
+            }
+
+            object Get(object obj, string name) => obj?.GetType().GetProperty(name)?.GetValue(obj);
+            double GetDouble(object obj, string name) => Get(obj, name) is double d ? d : double.NaN;
+            int GetInt(object obj, string name) => Get(obj, name) is int i ? i : -1;
+
+            var durationObj = Get(lastReport, "Duration");
+            var rSquaresObj = Get(lastReport, "RSquares");
+            var calcFocusPoint = Get(lastReport, "CalculatedFocusPoint");
+
+            HttpContext.Response.StatusCode = 200;
+            return new Dictionary<string, object>()
+            {
+                { "Success", true },
+                { "Timestamp",              Get(lastReport, "Timestamp") },
+                { "Filter",                 Get(lastReport, "Filter") },
+                { "Temperature",            GetDouble(lastReport, "Temperature") },
+                { "DurationSeconds",        durationObj is TimeSpan ts ? ts.TotalSeconds : double.NaN },
+                { "InitialFocuserPosition", GetInt(currentVM, "InitialFocuserPosition") },
+                { "FinalFocuserPosition",   GetInt(currentVM, "FinalFocuserPosition") },
+                { "InitialHFR",             GetDouble(currentVM, "InitialHFR") },
+                { "FinalHFR",               GetDouble(currentVM, "FinalHFR") },
+                { "EstimatedFinalHFR",      GetDouble(calcFocusPoint, "Value") },
+                { "Fitting",                Get(lastReport, "Fitting")?.ToString() },
+                { "RSquares", rSquaresObj == null ? null : new Dictionary<string, object>
+                    {
+                        { "Hyperbolic", GetDouble(rSquaresObj, "Hyperbolic") },
+                        { "Quadratic",  GetDouble(rSquaresObj, "Quadratic") },
+                        { "LeftTrend",  GetDouble(rSquaresObj, "LeftTrend") },
+                        { "RightTrend", GetDouble(rSquaresObj, "RightTrend") }
+                    }
+                },
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new Dictionary<string, object>()
+            {
+                { "Success", false },
+                { "Error", $"Failed to read last AutoFocus run: {ex.Message}" }
+            };
+        }
+    }
+
     [Route(HttpVerbs.Get, "/hocusfocus/autofocus/options")]
     public object GetAutoFocusOptions()
     {
@@ -3144,7 +3228,7 @@ public class HocusFocusController : WebApiController
                     { "Position2", result.Position2 },
                     { "Position3", result.Position3 }
                 };
-                
+
                 // Include raw positions for manual tilters (to show what was calculated before offsetting)
                 if (result.RawPosition1.HasValue)
                     responseDict["RawPosition1"] = result.RawPosition1;
@@ -3152,7 +3236,7 @@ public class HocusFocusController : WebApiController
                     responseDict["RawPosition2"] = result.RawPosition2;
                 if (result.RawPosition3.HasValue)
                     responseDict["RawPosition3"] = result.RawPosition3;
-                
+
                 return responseDict;
             }
         }
