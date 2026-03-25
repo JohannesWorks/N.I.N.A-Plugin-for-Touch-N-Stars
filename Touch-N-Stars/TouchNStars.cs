@@ -1,6 +1,7 @@
 ﻿using NINA.Core.Utility;
 using NINA.Core.Utility.Notification;
 using NINA.Equipment.Interfaces.Mediator;
+using NINA.Equipment.Equipment.MyTelescope;
 using NINA.Image.Interfaces;
 using NINA.Plugin;
 using NINA.Plugin.Interfaces;
@@ -29,6 +30,7 @@ namespace TouchNStars {
         IFramingAssistantVM framingAssistantVM,
         IProfileService profile,
         IGuiderMediator guider,
+        ITelescopeMediator telescope,
         IMessageBroker broker,
         ISequenceMediator sequence) {
 
@@ -37,6 +39,7 @@ namespace TouchNStars {
         public readonly IFramingAssistantVM FramingAssistantVM = framingAssistantVM;
         public readonly IProfileService Profile = profile;
         public readonly IGuiderMediator Guider = guider;
+        public readonly ITelescopeMediator Telescope = telescope;
         public readonly IMessageBroker MessageBroker = broker;
         public readonly ISequenceMediator Sequence = sequence;
     }
@@ -63,6 +66,7 @@ namespace TouchNStars {
                     IImageDataFactory imageDataFactory,
                     IFramingAssistantVM framingAssistantVM,
                     IGuiderMediator guider,
+                    ITelescopeMediator telescope,
                     IMessageBroker broker,
                     ISequenceMediator sequence) {
             if (Settings.Default.UpdateSettings) {
@@ -79,6 +83,7 @@ namespace TouchNStars {
                             framingAssistantVM,
                             profileService,
                             guider,
+                            telescope,
                             broker,
                             sequence);
 
