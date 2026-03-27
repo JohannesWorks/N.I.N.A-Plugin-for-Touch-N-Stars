@@ -1542,41 +1542,19 @@ public class TenMicronController : WebApiController
             if (!connected)
                 return Error("Mount is not connected", 503);
 
-            // :GRTF# — UTC time from mount (10micron extension), response: "HH:MM:SS#"
-            // :GRDF# — UTC date from mount (10micron extension), response: "YYYY-MM-DD#"
             // :GL#   — Local time, response: "HH:MM:SS#"
             // :GC#   — Local date, response: "MM/DD/YY#"
-            // :GG#   — UTC offset, response: "sHH#" or "sHH.H#"
             // :GS#   — Sidereal time, response: "HH:MM:SS#"
 
-            string utcTime = SendRawMountCommand(mountVM, ":GRTF#")?.TrimEnd('#');
-            string utcDate = SendRawMountCommand(mountVM, ":GRDF#")?.TrimEnd('#');
             string localTime = SendRawMountCommand(mountVM, ":GL#")?.TrimEnd('#');
             string localDate = SendRawMountCommand(mountVM, ":GC#")?.TrimEnd('#');
-            string utcOffset = SendRawMountCommand(mountVM, ":GG#")?.TrimEnd('#');
             string siderealTime = SendRawMountCommand(mountVM, ":GS#")?.TrimEnd('#');
-
-            // Parse UTC datetime into ISO 8601 if both parts are available
-            string utcIso = null;
-            if (!string.IsNullOrEmpty(utcDate) && !string.IsNullOrEmpty(utcTime)
-                && DateTime.TryParseExact($"{utcDate}T{utcTime}",
-                    "yyyy-MM-ddTHH:mm:ss",
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal,
-                    out var parsedUtc))
-            {
-                utcIso = parsedUtc.ToUniversalTime().ToString("o");
-            }
 
             return new Dictionary<string, object>
             {
                 { "Success",      true },
-                { "UTCTime",      utcTime },
-                { "UTCDate",      utcDate },
-                { "UTCISO",       utcIso },
                 { "LocalTime",    localTime },
                 { "LocalDate",    localDate },
-                { "UTCOffset",    utcOffset },
                 { "SiderealTime", siderealTime },
             };
         }
