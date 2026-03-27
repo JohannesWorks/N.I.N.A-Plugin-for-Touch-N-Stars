@@ -1522,6 +1522,71 @@ public class TenMicronController : WebApiController
         }
     }
 
+    // ── mount time ────────────────────────────────────────────────────────────
+
+    /// <summary>GET /tenmicron/time — fetches current time/date directly from the mount via LX200 commands</summary>
+    [Route(HttpVerbs.Get, "/tenmicron/time")]
+    public object GetMountTime()
+    {
+        if (!IsPluginLoaded()) return PluginNotLoaded();
+        try
+        {
+            var mountVMMediator = GetMountVMMediator();
+            var mountVM = GetMediatorHandler(mountVMMediator);
+            if (mountVM == null)
+                return Error("Mount VM not available");
+
+            var modelMediator = GetMountModelMediator();
+            var info = CallMethod(modelMediator, "GetInfo");
+            bool connected = info != null && GetProp<bool>(info, "Connected");
+            if (!connected)
+                return Error("Mount is not connected", 503);
+
+            // :GRTF# — UTC time from mount (10micron extension), response: "HH:MM:SS#"
+            // :GRDF# — UTC date from mount (10micron extension), response: "YYYY-MM-DD#"
+            // :GL#   — Local time, response: "HH:MM:SS#"
+            // :GC#   — Local date, response: "MM/DD/YY#"
+            // :GG#   — UTC offset, response: "sHH#" or "sHH.H#"
+            // :GS#   — Sidereal time, response: "HH:MM:SS#"
+
+            string utcTime = SendRawMountCommand(mountVM, ":GRTF#")?.TrimEnd('#');
+            string utcDate = SendRawMountCommand(mountVM, ":GRDF#")?.TrimEnd('#');
+            string localTime = SendRawMountCommand(mountVM, ":GL#")?.TrimEnd('#');
+            string localDate = SendRawMountCommand(mountVM, ":GC#")?.TrimEnd('#');
+            string utcOffset = SendRawMountCommand(mountVM, ":GG#")?.TrimEnd('#');
+            string siderealTime = SendRawMountCommand(mountVM, ":GS#")?.TrimEnd('#');
+
+            // Parse UTC datetime into ISO 8601 if both parts are available
+            string utcIso = null;
+            if (!string.IsNullOrEmpty(utcDate) && !string.IsNullOrEmpty(utcTime)
+                && DateTime.TryParseExact($"{utcDate}T{utcTime}",
+                    "yyyy-MM-ddTHH:mm:ss",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out var parsedUtc))
+            {
+                utcIso = parsedUtc.ToUniversalTime().ToString("o");
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "Success",      true },
+                { "UTCTime",      utcTime },
+                { "UTCDate",      utcDate },
+                { "UTCISO",       utcIso },
+                { "LocalTime",    localTime },
+                { "LocalDate",    localDate },
+                { "UTCOffset",    utcOffset },
+                { "SiderealTime", siderealTime },
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("TenMicron GetMountTime failed", ex);
+            return Error(ex.Message);
+        }
+    }
+
     // ── utility ────────────────────────────────────────────────────────────────
 
     private async Task<string> ReadStringField(string field)
