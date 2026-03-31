@@ -2993,34 +2993,26 @@ namespace TouchNStars.Server.Controllers
                 return strValue;
             }
 
-            // Handle InputCoordinates - return as structured object so the front-end
-            // can access RAHours, RAMinutes, RASeconds, DecDegrees, etc. directly
-            // instead of having to regex-parse the locale-sensitive ToString() output.
-            if (value is NINA.Astrometry.InputCoordinates inputCoords)
+            // Generic fallback for complex types: reflect over [JsonProperty]-annotated properties.
+            // This handles InputCoordinates, InputTopocentricCoordinates, InputTarget, and any
+            // future NINA type without needing explicit case-by-case handling here.
+            if (type.IsClass || (type.IsValueType && !type.IsEnum))
             {
-                return new Hashtable
-                {
-                    { "RAHours",    inputCoords.RAHours },
-                    { "RAMinutes",  inputCoords.RAMinutes },
-                    { "RASeconds",  inputCoords.RASeconds },
-                    { "NegativeDec", inputCoords.NegativeDec },
-                    { "DecDegrees", inputCoords.DecDegrees },
-                    { "DecMinutes", inputCoords.DecMinutes },
-                    { "DecSeconds", inputCoords.DecSeconds },
-                };
-            }
+                var jsonProps = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanRead
+                             && p.GetIndexParameters().Length == 0
+                             && p.GetCustomAttribute<JsonPropertyAttribute>() != null);
 
-            // Handle InputTarget - return as structured object so PositionAngle
-            // is a proper double (serialized by Newtonsoft with InvariantCulture)
-            // rather than an interpolated string that uses the current locale.
-            if (value is NINA.Astrometry.InputTarget inputTarget)
-            {
-                return new Hashtable
+                if (jsonProps.Any())
                 {
-                    { "TargetName",       inputTarget.TargetName },
-                    { "PositionAngle",    inputTarget.PositionAngle },
-                    { "InputCoordinates", SafeSerializeValue(inputTarget.InputCoordinates) },
-                };
+                    var dict = new Hashtable();
+                    foreach (var prop in jsonProps)
+                    {
+                        try { dict[prop.Name] = SafeSerializeValue(prop.GetValue(value)); }
+                        catch { /* skip properties that throw */ }
+                    }
+                    return dict;
+                }
             }
 
             // Fallback: return string representation for unknown complex types

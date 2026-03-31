@@ -363,7 +363,7 @@ public class TenMicronController : WebApiController
 
     // ── alignment model info ───────────────────────────────────────────────────
 
-    /// <summary>GET /tenmicron/alignment-model — fetches fresh alignment model data from the mount</summary>
+    /// <summary>GET /tenmicron/alignment-model — returns the current alignment model data</summary>
     [Route(HttpVerbs.Get, "/tenmicron/alignment-model")]
     public async Task<object> GetAlignmentModel()
     {
@@ -373,7 +373,10 @@ public class TenMicronController : WebApiController
             var modelMediator = GetMountModelMediator();
             var vmHandler = GetMediatorHandler(modelMediator);
 
-            // Trigger a fresh load from the mount via the private LoadAlignmentModel method
+            // Wait for any in-progress alignment model load using the public GetLoadedAlignmentModel API.
+            // This avoids triggering an extra mount query (which races with NINA's own polling and
+            // can silently fail), whilst still returning up-to-date data when a load is already
+            // running (e.g. right after a model build completes via FinishAlignmentSpec).
             if (vmHandler != null)
             {
                 var ct = CancellationToken.None;
@@ -382,13 +385,13 @@ public class TenMicronController : WebApiController
                 var cts = ctsField?.GetValue(vmHandler) as System.Threading.CancellationTokenSource;
                 if (cts != null) ct = cts.Token;
 
-                var loadMethod = vmHandler.GetType().GetMethod("LoadAlignmentModel",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-                if (loadMethod != null)
+                var getLoadedMethod = vmHandler.GetType().GetMethod("GetLoadedAlignmentModel",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (getLoadedMethod != null)
                 {
-                    var loadTask = loadMethod.Invoke(vmHandler, new object[] { ct }) as Task;
-                    if (loadTask != null)
-                        await loadTask.ConfigureAwait(false);
+                    var getLoadedTask = getLoadedMethod.Invoke(vmHandler, new object[] { ct }) as Task;
+                    if (getLoadedTask != null)
+                        await getLoadedTask.ConfigureAwait(false);
                 }
             }
 
@@ -1515,6 +1518,49 @@ public class TenMicronController : WebApiController
         catch (Exception ex)
         {
             Logger.Error("TenMicron ClearAlignment failed", ex);
+            return Error(ex.Message);
+        }
+    }
+
+    // ── mount time ────────────────────────────────────────────────────────────
+
+    /// <summary>GET /tenmicron/time — fetches current time/date directly from the mount via LX200 commands</summary>
+    [Route(HttpVerbs.Get, "/tenmicron/time")]
+    public object GetMountTime()
+    {
+        if (!IsPluginLoaded()) return PluginNotLoaded();
+        try
+        {
+            var mountVMMediator = GetMountVMMediator();
+            var mountVM = GetMediatorHandler(mountVMMediator);
+            if (mountVM == null)
+                return Error("Mount VM not available");
+
+            var modelMediator = GetMountModelMediator();
+            var info = CallMethod(modelMediator, "GetInfo");
+            bool connected = info != null && GetProp<bool>(info, "Connected");
+            if (!connected)
+                return Error("Mount is not connected", 503);
+
+            // :GL#   — Local time, response: "HH:MM:SS#"
+            // :GC#   — Local date, response: "MM/DD/YY#"
+            // :GS#   — Sidereal time, response: "HH:MM:SS#"
+
+            string localTime = SendRawMountCommand(mountVM, ":GL#")?.TrimEnd('#');
+            string localDate = SendRawMountCommand(mountVM, ":GC#")?.TrimEnd('#');
+            string siderealTime = SendRawMountCommand(mountVM, ":GS#")?.TrimEnd('#');
+
+            return new Dictionary<string, object>
+            {
+                { "Success",      true },
+                { "LocalTime",    localTime },
+                { "LocalDate",    localDate },
+                { "SiderealTime", siderealTime },
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("TenMicron GetMountTime failed", ex);
             return Error(ex.Message);
         }
     }
