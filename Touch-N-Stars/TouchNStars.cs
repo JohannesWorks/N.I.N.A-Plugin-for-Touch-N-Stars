@@ -1,4 +1,5 @@
-﻿using NINA.Core.Utility;
+﻿using NINA.Astrometry.Interfaces;
+using NINA.Core.Utility;
 using NINA.Core.Utility.Notification;
 using NINA.Equipment.Interfaces.Mediator;
 using NINA.Equipment.Equipment.MyTelescope;
@@ -6,8 +7,10 @@ using NINA.Image.Interfaces;
 using NINA.Plugin;
 using NINA.Plugin.Interfaces;
 using NINA.Profile.Interfaces;
-using NINA.WPF.Base.Interfaces.ViewModel;
 using NINA.Sequencer.Interfaces.Mediator;
+using NINA.Sequencer.Logic;
+using NINA.WPF.Base.Interfaces.Mediator;
+using NINA.WPF.Base.Interfaces.ViewModel;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -32,7 +35,15 @@ namespace TouchNStars {
         IGuiderMediator guider,
         ITelescopeMediator telescope,
         IMessageBroker broker,
-        ISequenceMediator sequence) {
+        ISequenceMediator sequence,
+        ICameraMediator camera,
+        IImagingMediator imaging,
+        IImageSaveMediator imageSaveMediator,
+        IImageHistoryVM imageHistory,
+        IFilterWheelMediator filterWheel,
+        IFlatDeviceMediator flatDevice,
+        ITwilightCalculator twilightCalculator,
+        ISymbolBroker symbolBroker) {
 
         public readonly IDeepSkyObjectSearchVM DeepSkyObjectSearchVM = DeepSkyObjectSearchVM;
         public readonly IImageDataFactory ImageDataFactory = ImageDataFactory;
@@ -42,6 +53,14 @@ namespace TouchNStars {
         public readonly ITelescopeMediator Telescope = telescope;
         public readonly IMessageBroker MessageBroker = broker;
         public readonly ISequenceMediator Sequence = sequence;
+        public readonly ICameraMediator Camera = camera;
+        public readonly IImagingMediator Imaging = imaging;
+        public readonly IImageSaveMediator ImageSaveMediator = imageSaveMediator;
+        public readonly IImageHistoryVM ImageHistory = imageHistory;
+        public readonly IFilterWheelMediator FilterWheel = filterWheel;
+        public readonly IFlatDeviceMediator FlatDevice = flatDevice;
+        public readonly ITwilightCalculator TwilightCalculator = twilightCalculator;
+        public readonly ISymbolBroker SymbolBroker = symbolBroker;
     }
 
     [Export(typeof(IPluginManifest))]
@@ -68,7 +87,15 @@ namespace TouchNStars {
                     IGuiderMediator guider,
                     ITelescopeMediator telescope,
                     IMessageBroker broker,
-                    ISequenceMediator sequence) {
+                    ISequenceMediator sequence,
+                    ICameraMediator camera,
+                    IImagingMediator imagingMediator,
+                    IImageSaveMediator imageSaveMediator,
+                    IImageHistoryVM imageHistoryVM,
+                    IFilterWheelMediator filterWheelMediator,
+                    IFlatDeviceMediator flatDeviceMediator,
+                    ITwilightCalculator twilightCalculator,
+                    ISymbolBroker symbolBroker) {
             if (Settings.Default.UpdateSettings) {
                 Settings.Default.Upgrade();
                 Settings.Default.UpdateSettings = false;
@@ -85,7 +112,15 @@ namespace TouchNStars {
                             guider,
                             telescope,
                             broker,
-                            sequence);
+                            sequence,
+                            camera,
+                            imagingMediator,
+                            imageSaveMediator,
+                            imageHistoryVM,
+                            filterWheelMediator,
+                            flatDeviceMediator,
+                            twilightCalculator,
+                            symbolBroker);
 
             UpdateDefaultPortCommand = new CommunityToolkit.Mvvm.Input.RelayCommand(() => {
                 Port = CachedPort;
