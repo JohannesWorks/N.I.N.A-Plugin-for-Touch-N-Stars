@@ -3999,6 +3999,81 @@ public class PinsController : WebApiController
         }
     }
 
+    /// <summary>
+    /// POST /api/pins/powerbox/beep - Make PowerBox beep with specified volume and duration
+    /// </summary>
+    [Route(HttpVerbs.Post, "/pins/powerbox/beep")]
+    public ApiResponse BeepPowerBox([QueryField] int volume = 100, [QueryField] int lengthMs = 1000)
+    {
+        try
+        {
+            var powerBox = GetPINSConnectedPowerBox();
+            if (powerBox == null)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PowerBox device not connected",
+                    StatusCode = 404,
+                    Type = "Error"
+                };
+            }
+
+            // Call the Beep method via reflection with volume and length parameters
+            var method = powerBox.GetType().GetMethod("Beep", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int), typeof(int) }, null);
+            if (method == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Beep method not available on PowerBox device",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            try
+            {
+                method.Invoke(powerBox, new object[] { volume, lengthMs });
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error invoking Beep method: {ex}");
+                HttpContext.Response.StatusCode = 500;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = $"Error calling Beep method: {ex.InnerException?.Message ?? ex.Message}",
+                    StatusCode = 500,
+                    Type = "Error"
+                };
+            }
+
+            HttpContext.Response.StatusCode = 200;
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { Message = "PowerBox beep successful", Volume = volume, LengthMs = lengthMs },
+                StatusCode = 200,
+                Type = "Success"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error beeping PowerBox: {ex}");
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = "An error occurred while beeping PowerBox",
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
     #region Helper Methods
 
     private PowerPortsInfo MapPowerPorts(object powerPorts)
