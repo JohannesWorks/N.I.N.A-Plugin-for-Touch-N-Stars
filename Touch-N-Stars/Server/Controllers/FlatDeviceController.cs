@@ -21,6 +21,9 @@ public class FlatDeviceController : WebApiController
 {
     private static Task _flatTask;
     private static CancellationTokenSource _flatCts;
+    private static int _totalIterations;
+    private static int _completedIterations;
+    private static double? _currentADU;
 
     // ── POST /api/flats/multimode ────────────────────────────────────────────
     [Route(HttpVerbs.Post, "/flats/multimode")]
@@ -81,6 +84,10 @@ public class FlatDeviceController : WebApiController
             var keepClosed = payload.KeepClosed;
             var filters = payload.Filters;
 
+            _totalIterations = filters.Sum(fc => fc.Count);
+            _completedIterations = 0;
+            _currentADU = null;
+
             _flatTask = Task.Run(async () =>
             {
                 foreach (var fc in filters)
@@ -102,6 +109,7 @@ public class FlatDeviceController : WebApiController
                             await RunAutoExposure(fc, filterList[fc.FilterId], panelClosed, progress, token);
                             break;
                     }
+                    _completedIterations += fc.Count;
                 }
             }, token);
 
@@ -113,6 +121,26 @@ public class FlatDeviceController : WebApiController
             HttpContext.Response.StatusCode = 500;
             return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
         }
+    }
+
+    // ── GET /api/flats/status ─────────────────────────────────────────────────
+    [Route(HttpVerbs.Get, "/flats/status")]
+    public ApiResponse GetMultiModeStatus()
+    {
+        bool running = _flatTask != null && !_flatTask.IsCompleted;
+        return new ApiResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Type = "Success",
+            Response = new
+            {
+                State = running ? "Running" : "Finished",
+                TotalIterations = running ? _totalIterations : -1,
+                CompletedIterations = running ? _completedIterations : -1,
+                CurrentADU = _currentADU,
+            },
+        };
     }
 
     // ── GET /api/flats/stop ──────────────────────────────────────────────────
@@ -163,6 +191,7 @@ public class FlatDeviceController : WebApiController
             Logger.Warning($"AutoExposureFlat validation issues for filter {filter?.Name}: {string.Join(", ", issues)}");
 
         await flat.Execute(progress, token);
+        _currentADU = flat.DeterminedHistogramADU > 0 ? flat.DeterminedHistogramADU : (double?)null;
     }
 
     private static async Task RunAutoBrightness(FilterConfig fc, NINA.Core.Model.Equipment.FilterInfo filter,
@@ -200,6 +229,7 @@ public class FlatDeviceController : WebApiController
             Logger.Warning($"AutoBrightnessFlat validation issues for filter {filter?.Name}: {string.Join(", ", issues)}");
 
         await flat.Execute(progress, token);
+        _currentADU = flat.DeterminedHistogramADU > 0 ? flat.DeterminedHistogramADU : (double?)null;
     }
 
     private static async Task RunSkyFlat(FilterConfig fc, NINA.Core.Model.Equipment.FilterInfo filter,
@@ -231,6 +261,7 @@ public class FlatDeviceController : WebApiController
             Logger.Warning($"SkyFlat validation issues for filter {filter?.Name}: {string.Join(", ", issues)}");
 
         await flat.Execute(progress, token);
+        _currentADU = flat.DeterminedHistogramADU > 0 ? flat.DeterminedHistogramADU : (double?)null;
     }
 
     private static void SetBinning(NINA.Sequencer.SequenceItem.Imaging.TakeExposure exposure, string binningName)
