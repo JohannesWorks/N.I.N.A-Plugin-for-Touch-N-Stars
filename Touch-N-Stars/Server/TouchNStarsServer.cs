@@ -62,7 +62,8 @@ namespace TouchNStars.Server {
                 .WithController<PinsController>()        // PINS device management
                 .WithController<SequenceController>()    // Sequence item discovery and management
                 .WithController<TenMicronController>()   // 10micron model builder integration
-                .WithController<LocationController>());  // Profile & mount site location
+                .WithController<LocationController>()    // Profile & mount site location
+                .WithController<FlatDeviceController>()); // Flat device multi-filter capture
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 

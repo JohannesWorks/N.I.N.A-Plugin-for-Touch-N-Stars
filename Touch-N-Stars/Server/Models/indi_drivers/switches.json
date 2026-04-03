@@ -4,5 +4,8 @@
   { "Name": "indi_pegasus_ppba", "Label": "Pegasus PPB Advanced", "Type": "switches" },
   { "Name": "indi_pegasus_spb", "Label": "Pegasus SPB", "Type": "switches" },
   { "Name": "indi_pegasus_upb", "Label": "Pegasus UPB", "Type": "switches" },
+  { "Name": "indi_svbony_powerbox", "Label": "SV241 PowerBox", "Type": "switches" },
+  { "Name": "indi_wandererbox_plus_v3", "Label": "Wanderer Box Plus V3", "Type": "switches" },
+  { "Name": "indi_wandererbox_pro_v3", "Label": "Wanderer Box Pro V3", "Type": "switches" },
   { "Name": "indi_wanderer_dew_terminator", "Label": "Wanderer Dew Terminator", "Type": "switches" }
 ]
