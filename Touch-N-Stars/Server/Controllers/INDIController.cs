@@ -95,11 +95,13 @@ public class INDIController : WebApiController
                 Description = GetSerialPortDescription(p)
             }).ToList();
 
+            var byIdLinks = GetSerialByIdLinks();
+
             HttpContext.Response.StatusCode = 200;
             return new ApiResponse
             {
                 Success = true,
-                Response = portInfos,
+                Response = new { Ports = portInfos, ByIdLinks = byIdLinks },
                 StatusCode = 200,
                 Type = "SerialPorts"
             };
@@ -162,6 +164,38 @@ public class INDIController : WebApiController
         {
             return "";
         }
+    }
+
+    private static List<object> GetSerialByIdLinks()
+    {
+        var result = new List<object>();
+        var byIdPath = "/dev/serial/by-id";
+        if (!Directory.Exists(byIdPath))
+            return result;
+
+        try
+        {
+            foreach (var link in Directory.GetFiles(byIdPath).OrderBy(s => s))
+            {
+                var linkName = Path.GetFileName(link);
+                var resolvedPath = "";
+                try
+                {
+                    var target = new FileInfo(link).LinkTarget;
+                    if (target != null)
+                        resolvedPath = Path.GetFullPath(Path.Combine(byIdPath, target));
+                }
+                catch { }
+
+                result.Add(new { Id = linkName, Path = $"{byIdPath}/{linkName}", ResolvedPort = resolvedPath });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error enumerating /dev/serial/by-id: {ex}");
+        }
+
+        return result;
     }
 
     private static string ReadSysfsFile(string path)
