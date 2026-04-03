@@ -235,12 +235,6 @@ public class FlatDeviceController : WebApiController
         flat.KeepPanelClosed = keepPanelClosed;
         SetBinning(flat.GetExposureItem(), fc.Binning);
 
-        // Expand the expression range so Validate() accepts values beyond the default 100-cap
-        var deviceInfo = TouchNStars.Mediators.FlatDevice?.GetInfo();
-        double deviceMax = (deviceInfo?.Connected == true) ? deviceInfo.MaxBrightness : 0;
-        flat.MaxBrightnessExpression.Range = [0, deviceMax, 0];
-        flat.MinBrightnessExpression.Range = [0, deviceMax, 0];
-
         var issues = flat.Validate() ? null : flat.Issues;
         if (issues?.Count > 0)
             Logger.Warning($"AutoBrightnessFlat validation issues for filter {filter?.Name}: {string.Join(", ", issues)}");
@@ -264,8 +258,7 @@ public class FlatDeviceController : WebApiController
             TouchNStars.Mediators.ImageSaveMediator,
             TouchNStars.Mediators.ImageHistory,
             TouchNStars.Mediators.FilterWheel,
-            TouchNStars.Mediators.TwilightCalculator,
-            TouchNStars.Mediators.SymbolBroker);
+            TouchNStars.Mediators.TwilightCalculator);
 
         flat.GetIterations().Iterations = fc.Count;
         flat.MinExposure = fc.MinExposure;
