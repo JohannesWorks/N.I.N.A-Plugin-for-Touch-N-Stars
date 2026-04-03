@@ -4,7 +4,10 @@ using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
 using System;
-using System.Runtime.InteropServices;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Ports;
+using System.Linq;
 
 namespace TouchNStars.Server.Controllers;
 
@@ -78,19 +81,25 @@ public class INDIController : WebApiController
 
     /// <summary>
     /// GET /api/indi/serialports - Get available serial ports for INDI connections
+    /// Returns objects with port name and description (manufacturer/product from sysfs on Linux)
     /// </summary>
     [Route(HttpVerbs.Get, "/indi/serialports")]
     public ApiResponse GetAvailableSerialPorts()
     {
         try
         {
-            var portNames = System.IO.Ports.SerialPort.GetPortNames();
+            var portNames = SerialPort.GetPortNames().OrderBy(s => s).ToArray();
+            var portInfos = portNames.Select(p => new
+            {
+                Port = p,
+                Description = GetSerialPortDescription(p)
+            }).ToList();
 
             HttpContext.Response.StatusCode = 200;
             return new ApiResponse
             {
                 Success = true,
-                Response = portNames,
+                Response = portInfos,
                 StatusCode = 200,
                 Type = "SerialPorts"
             };
@@ -106,6 +115,64 @@ public class INDIController : WebApiController
                 StatusCode = 500,
                 Type = "Error"
             };
+        }
+    }
+
+    private static string GetSerialPortDescription(string portName)
+    {
+        try
+        {
+            var ttyName = Path.GetFileName(portName); // e.g. "ttyUSB0"
+
+            // Same approach as UsbDeviceWatcher: enumerate /sys/bus/usb/devices
+            var usbDevicesPath = "/sys/bus/usb/devices";
+            if (!Directory.Exists(usbDevicesPath))
+                return "";
+
+            // Look through USB interface directories (e.g. 3-2:1.0) for one that contains our tty
+            foreach (var dir in Directory.GetDirectories(usbDevicesPath))
+            {
+                var dirName = Path.GetFileName(dir);
+                // Interface directories contain a colon (e.g. "3-2:1.0")
+                if (!dirName.Contains(':'))
+                    continue;
+
+                var ttySubDir = Path.Combine(dir, ttyName);
+                if (!Directory.Exists(ttySubDir))
+                    continue;
+
+                // Found the interface that owns this tty port
+                // The parent USB device dir is the part before the colon (e.g. "3-2")
+                var parentDeviceName = dirName.Split(':')[0];
+                var parentDevicePath = Path.Combine(usbDevicesPath, parentDeviceName);
+
+                var manufacturer = ReadSysfsFile(Path.Combine(parentDevicePath, "manufacturer"));
+                var product = ReadSysfsFile(Path.Combine(parentDevicePath, "product"));
+
+                var parts = new List<string>();
+                if (!string.IsNullOrEmpty(manufacturer)) parts.Add(manufacturer);
+                if (!string.IsNullOrEmpty(product)) parts.Add(product);
+
+                return string.Join(" - ", parts);
+            }
+
+            return "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static string ReadSysfsFile(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : "";
+        }
+        catch
+        {
+            return "";
         }
     }
 
