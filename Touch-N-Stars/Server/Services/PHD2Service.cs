@@ -83,7 +83,7 @@ namespace TouchNStars.Server.Services
                         lock (lockObject)
                         {
                             Logger.Info($"PHD2 connection attempt {attemptCount}/{maxRetries} to {hostname}, instance {instance}");
-                            
+
                             // Defensive disconnect of existing connection
                             if (client != null && client.IsConnected)
                             {
@@ -102,10 +102,10 @@ namespace TouchNStars.Server.Services
 
                             Logger.Debug($"Creating PHD2 client for {hostname}:{port}");
                             client = new PHD2Client(hostname, instance);
-                            
+
                             Logger.Debug("Attempting PHD2 client connection");
                             client.Connect();
-                            
+
                             if (client.IsConnected)
                             {
                                 Logger.Info($"PHD2 connection successful on attempt {attemptCount}");
@@ -122,7 +122,7 @@ namespace TouchNStars.Server.Services
                     {
                         string errorMsg = $"PHD2 connection attempt {attemptCount} failed: {ex.Message}";
                         Logger.Warning(errorMsg);
-                        
+
                         if (attemptCount < maxRetries)
                         {
                             Logger.Info($"Retrying PHD2 connection in {attemptCount * 1000}ms...");
@@ -360,6 +360,122 @@ namespace TouchNStars.Server.Services
             });
         }
 
+        public async Task<int> CreateProfileAsync(string profileName)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            lastError = "PHD2 is not connected";
+                            return -1;
+                        }
+
+                        var profileId = client.CreateProfile(profileName);
+                        lastError = null;
+                        Logger.Info($"Created PHD2 profile '{profileName}' with ID {profileId}");
+                        return profileId;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to create profile '{profileName}': {ex}");
+                    return -1;
+                }
+            });
+        }
+
+        public async Task<bool> DeleteProfileAsync(string profileName)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            lastError = "PHD2 is not connected";
+                            return false;
+                        }
+
+                        client.DeleteProfile(profileName);
+                        lastError = null;
+                        Logger.Info($"Deleted PHD2 profile '{profileName}'");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to delete profile '{profileName}': {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task<bool> RenameProfileAsync(string newName)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            lastError = "PHD2 is not connected";
+                            return false;
+                        }
+
+                        client.RenameProfile(newName);
+                        lastError = null;
+                        Logger.Info($"Renamed PHD2 profile to '{newName}'");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to rename profile to '{newName}': {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task<bool> SetProfileAsync(int profileId)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            lastError = "PHD2 is not connected";
+                            return false;
+                        }
+
+                        client.SetProfile(profileId);
+                        lastError = null;
+                        Logger.Info($"Selected PHD2 profile ID {profileId}");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set profile to ID {profileId}: {ex}");
+                    return false;
+                }
+            });
+        }
+
         public async Task<bool> ConnectEquipmentAsync(string profileName)
         {
             return await Task.Run(() =>
@@ -519,6 +635,1801 @@ namespace TouchNStars.Server.Services
                 }
             });
         }
+
+        public async Task<int> GetFocalLengthAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetFocalLength();
+                    }
+                }
+                catch (PHD2Exception ex) when (ex.Message.Contains("Focal length not available"))
+                {
+                    Logger.Debug($"Focal length not available: {ex.Message}");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get focal length: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetFocalLengthAsync(int focalLength)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetFocalLength(focalLength);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set focal length: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Calibration methods
+        public async Task<int> GetCalibrationStepAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCalibrationStep();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get calibration step: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetCalibrationStepAsync(int step)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCalibrationStep(step);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set calibration step: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task ClearMountCalibrationAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.ClearMountCalibration();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to clear mount calibration: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Auto-restore calibration methods
+        public async Task<bool> GetAutoRestoreCalibrationsAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetAutoRestoreCalibration();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get auto restore calibration: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetAutoRestoreCalibrationsAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetAutoRestoreCalibration(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set auto restore calibration: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Orthogonal assumption methods
+        public async Task<bool> GetAssumeDecOrthogonalAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetAssumeDecOrthogonal();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get assume dec orthogonal: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetAssumeDecOrthogonalAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetAssumeDecOrthogonal(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set assume dec orthogonal: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // DEC compensation methods
+        public async Task<bool> GetUseDecCompensationAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetUseDecCompensation();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get use dec compensation: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetUseDecCompensationAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetUseDecCompensation(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set use dec compensation: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Search region method
+        public async Task<int> GetSearchRegionAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetSearchRegion();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get search region: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetSearchRegionAsync(int pixels)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetSearchRegion(pixels);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set search region: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // HFR threshold methods
+        public async Task<double> GetMinStarHFRAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetMinStarHFR();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get min star HFR: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetMinStarHFRAsync(double hfr)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetMinStarHFR(hfr);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set min star HFR: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetMaxStarHFRAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetMaxStarHFR();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get max star HFR: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetMaxStarHFRAsync(double hfr)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetMaxStarHFR(hfr);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set max star HFR: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Lost star beep method
+        public async Task<bool> GetBeepForLostStarAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetBeepForLostStar();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get beep for lost star: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetBeepForLostStarAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetBeepForLostStar(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set beep for lost star: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Mass change threshold methods
+        public async Task<bool> GetMassChangeThresholdEnabledAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetMassChangeThresholdEnabled();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get mass change threshold enabled: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetMassChangeThresholdEnabledAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetMassChangeThresholdEnabled(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set mass change threshold enabled: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetMassChangeThresholdAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetMassChangeThreshold();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get mass change threshold: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetMassChangeThresholdAsync(double threshold)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetMassChangeThreshold(threshold);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set mass change threshold: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // AF SNR method
+        public async Task<double> GetAFMinStarSNRAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetAFMinStarSNR();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get AF min star SNR: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetAFMinStarSNRAsync(double snr)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetAFMinStarSNR(snr);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set AF min star SNR: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Multi-star mode method
+        public async Task<bool> GetUseMultipleStarsAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetUseMultipleStars();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get use multiple stars: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetUseMultipleStarsAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetUseMultipleStars(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set use multiple stars: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Auto-select downsample method
+        public async Task<string> GetAutoSelectDownsampleAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetAutoSelectDownsample();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get auto select downsample: {ex}");
+                    return "Auto";
+                }
+            });
+        }
+
+        public async Task SetAutoSelectDownsampleAsync(string value)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetAutoSelectDownsample(value);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set auto select downsample: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Image scaling method
+        public async Task<bool> GetAlwaysScaleImagesAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetAlwaysScaleImages();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get always scale images: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetAlwaysScaleImagesAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetAlwaysScaleImages(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set always scale images: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Meridian flip methods
+        public async Task<bool> GetReverseDecAfterFlipAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetReverseDecAfterFlip();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get reverse dec on flip: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetReverseDecAfterFlipAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetReverseDecAfterFlip(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set reverse dec on flip: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Fast recenter methods
+        public async Task<bool> GetFastRecenterEnabledAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetFastRecenterEnabled();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get fast recenter enabled: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetFastRecenterEnabledAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetFastRecenterEnabled(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set fast recenter enabled: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Mount guide output methods
+        public async Task<bool> GetMountGuideOutputEnabledAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetMountGuideOutputEnabled();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get mount guide output enabled: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetMountGuideOutputEnabledAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetMountGuideOutputEnabled(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set mount guide output enabled: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Camera control methods
+        public async Task<int> GetCameraGainAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCameraGain();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get camera gain: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetCameraGainAsync(int gain)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCameraGain(gain);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set camera gain: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<bool> GetCameraCoolerOnAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCameraCoolerOn();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get camera cooler on: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetCameraCoolerOnAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCameraCoolerOn(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set camera cooler on: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetCameraTemperatureSetpointAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCameraTemperatureSetpoint();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get camera temperature setpoint: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetCameraTemperatureSetpointAsync(double temperature)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCameraTemperatureSetpoint(temperature);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set camera temperature setpoint: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<bool> GetCameraUseSubframesAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCameraUseSubframes();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get camera use subframes: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetCameraUseSubframesAsync(bool enabled)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCameraUseSubframes(enabled);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set camera use subframes: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<int> GetCameraBinningAsync()
+        {
+            await WaitForConnectionIfNeeded();
+
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        return client.GetCameraBinning();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get camera binning: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetCameraBinningAsync(int binning)
+        {
+            await WaitForConnectionIfNeeded();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+
+                        client.SetCameraBinning(binning);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set camera binning: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Auto exposure methods
+        public async Task<double> GetAutoExposureMinAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetAutoExposureMin();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get auto exposure min: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetAutoExposureMinAsync(double min)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetAutoExposureMin(min);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set auto exposure min: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetAutoExposureMaxAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetAutoExposureMax();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get auto exposure max: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetAutoExposureMaxAsync(double max)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetAutoExposureMax(max);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set auto exposure max: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetAutoExposureTargetSNRAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetAutoExposureTargetSNR();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get auto exposure target SNR: {ex}");
+                    return 0.0;
+                }
+            });
+        }
+
+        public async Task SetAutoExposureTargetSNRAsync(double snr)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetAutoExposureTargetSNR(snr);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set auto exposure target SNR: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Dither mode
+        public async Task<string> GetDitherModeAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetDitherMode();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get dither mode: {ex}");
+                    return "random";
+                }
+            });
+        }
+
+        public async Task SetDitherModeAsync(string mode)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetDitherMode(mode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set dither mode: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<bool> GetDitherRaOnlyAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetDitherRaOnly();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get dither ra_only: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetDitherRaOnlyAsync(bool raOnly)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetDitherRaOnly(raOnly);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set dither ra_only: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<double> GetDitherScaleAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetDitherScale();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get dither scale: {ex}");
+                    return 1.0;
+                }
+            });
+        }
+
+        public async Task SetDitherScaleAsync(double scale)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetDitherScale(scale);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set dither scale: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Saturation by ADU
+        public async Task<bool> GetSaturationByADUAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetSaturationByADU();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get saturation by ADU: {ex}");
+                    return false;
+                }
+            });
+        }
+
+        public async Task SetSaturationByADUAsync(bool byADU, int? aduValue = null)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetSaturationByADU(byADU, aduValue);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set saturation by ADU: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<int> GetSaturationADUValueAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetSaturationADUValue();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get saturation ADU value: {ex}");
+                    return 0;
+                }
+            });
+        }
+
+        public async Task SetSaturationADUValueAsync(int aduValue)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetSaturationADUValue(aduValue);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set saturation ADU value: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        // Guide algorithm selection
+        public async Task<string> GetGuideAlgorithmRAAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetGuideAlgorithmRA();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get guide algorithm RA: {ex}");
+                    return "none";
+                }
+            });
+        }
+
+        public async Task SetGuideAlgorithmRAAsync(string algorithm)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetGuideAlgorithmRA(algorithm);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set guide algorithm RA: {ex}");
+                    throw;
+                }
+            });
+        }
+
+        public async Task<string> GetGuideAlgorithmDECAsync()
+        {
+            await WaitForConnectionIfNeeded();
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        return client.GetGuideAlgorithmDEC();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to get guide algorithm DEC: {ex}");
+                    return "none";
+                }
+            });
+        }
+
+        public async Task SetGuideAlgorithmDECAsync(string algorithm)
+        {
+            await WaitForConnectionIfNeeded();
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (lockObject)
+                    {
+                        if (client == null || !client.IsConnected)
+                        {
+                            throw new InvalidOperationException("PHD2 not connected");
+                        }
+                        client.SetGuideAlgorithmDEC(algorithm);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    Logger.Error($"Failed to set guide algorithm DEC: {ex}");
+                    throw;
+                }
+            });
+        }
+
 
         // PHD2 "set_" methods
         public async Task SetExposureAsync(int exposureMs)
@@ -724,28 +2635,28 @@ namespace TouchNStars.Server.Services
 
                         // Log the exact value being sent
                         Logger.Info($"Setting PHD2 algorithm parameter {axis}.{name} = {value:F10} (raw: {value})");
-                        
+
                         // Round to a reasonable precision to avoid floating-point precision issues
                         // PHD2 typically works with values to 2-3 decimal places
                         double roundedValue = Math.Round(value, 3);
-                        
+
                         // Add a tiny offset to all values to avoid PHD2's internal floating-point precision issues
                         // This ensures we don't hit any problematic decimal representations
                         // Use 0.001 offset which will survive the 3-decimal rounding
                         double adjustedValue = roundedValue + 0.001;
-                        
+
                         Logger.Info($"Adjusted value from {roundedValue:F4} to {adjustedValue:F4} to avoid PHD2 floating-point issues");
-                        
+
                         roundedValue = adjustedValue;
 
                         client.SetAlgoParam(axis, name, roundedValue);
-                        
+
                         // Read back the value to verify what PHD2 actually received
                         try
                         {
                             var actualValue = client.GetAlgoParam(axis, name);
                             Logger.Info($"PHD2 confirmed parameter {axis}.{name} = {actualValue:F10} (expected: {roundedValue:F10})");
-                            
+
                             if (Math.Abs(actualValue - roundedValue) > 0.001)
                             {
                                 Logger.Warning($"Value mismatch! Sent: {roundedValue:F10}, Got back: {actualValue:F10}");
@@ -755,7 +2666,7 @@ namespace TouchNStars.Server.Services
                         {
                             Logger.Warning($"Could not read back parameter value: {ex.Message}");
                         }
-                        
+
                         lastError = null;
                     }
                 }
@@ -1181,7 +3092,7 @@ namespace TouchNStars.Server.Services
                 catch (Exception ex)
                 {
                     lastError = ex.Message;
-                    
+
                     // "no image available" is expected when PHD2 hasn't captured an image yet
                     if (ex.Message.Contains("no image available"))
                     {
@@ -1254,7 +3165,7 @@ namespace TouchNStars.Server.Services
                         lock (lockObject)
                         {
                             Logger.Debug("Disposing PHD2Service");
-                            
+
                             // Gracefully disconnect first
                             if (client != null && client.IsConnected)
                             {
@@ -1272,7 +3183,7 @@ namespace TouchNStars.Server.Services
                             // Dispose the client
                             client?.Dispose();
                             client = null;
-                            
+
                             Logger.Debug("PHD2Service disposed successfully");
                         }
                     }
