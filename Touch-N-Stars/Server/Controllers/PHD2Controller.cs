@@ -2,6 +2,7 @@ using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
+using PHD2.SHMGuider;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -58,7 +59,8 @@ public class PHD2Controller : WebApiController
         }
     }
 
-    public static void CleanupPHD2Service() {
+    public static void CleanupPHD2Service()
+    {
         phd2ImageService?.Dispose();
         phd2Service?.Dispose();
     }
@@ -67,20 +69,26 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/status - Get PHD2 connection and guiding status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/status")]
-    public async Task<ApiResponse> GetPHD2Status() {
-        try {
+    public async Task<ApiResponse> GetPHD2Status()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var status = await phd2Service.GetStatusAsync();
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = status,
                 StatusCode = 200,
                 Type = "PHD2Status"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -93,40 +101,53 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/connect - Connect to PHD2
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/connect")]
-    public async Task<ApiResponse> ConnectPHD2() {
-        try {
+    public async Task<ApiResponse> ConnectPHD2()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             string hostname = "localhost";
             uint instance = 1;
 
-            try {
+            try
+            {
                 var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                if (requestData != null) {
-                    if (requestData.ContainsKey("hostname") && requestData["hostname"] != null) {
+                if (requestData != null)
+                {
+                    if (requestData.ContainsKey("hostname") && requestData["hostname"] != null)
+                    {
                         hostname = requestData["hostname"].ToString();
                     }
-                    if (requestData.ContainsKey("instance") && requestData["instance"] != null) {
-                        if (uint.TryParse(requestData["instance"].ToString(), out uint parsedInstance)) {
+                    if (requestData.ContainsKey("instance") && requestData["instance"] != null)
+                    {
+                        if (uint.TryParse(requestData["instance"].ToString(), out uint parsedInstance))
+                        {
                             instance = parsedInstance;
                         }
                     }
                 }
-            } catch {
+            }
+            catch
+            {
                 // Use defaults if parsing fails
             }
 
             bool result = await phd2Service.ConnectAsync(hostname, instance);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { Connected = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Connection"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -139,21 +160,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/disconnect - Disconnect from PHD2
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/disconnect")]
-    public async Task<ApiResponse> DisconnectPHD2() {
-        try {
+    public async Task<ApiResponse> DisconnectPHD2()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             await phd2Service.DisconnectAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Connected = false },
                 StatusCode = 200,
                 Type = "PHD2Connection"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -166,21 +193,317 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/profiles - Get equipment profiles
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/profiles")]
-    public async Task<ApiResponse> GetPHD2Profiles() {
-        try {
+    public async Task<ApiResponse> GetPHD2Profiles()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var profiles = await phd2Service.GetEquipmentProfilesAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = profiles,
                 StatusCode = 200,
                 Type = "PHD2Profiles"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// POST /api/phd2/profile/create - Create a new equipment profile
+    /// </summary>
+    [Route(HttpVerbs.Post, "/phd2/profile/create")]
+    public async Task<ApiResponse> CreatePHD2Profile()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            
+            if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile name is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            string profileName = requestData["name"].ToString();
+            
+            if (string.IsNullOrEmpty(profileName))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile name cannot be empty",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            int profileId = await phd2Service.CreateProfileAsync(profileName);
+
+            if (profileId < 0)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = phd2Service.LastError ?? "Failed to create profile",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { ProfileId = profileId, ProfileName = profileName },
+                StatusCode = 200,
+                Type = "PHD2Profile"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// POST /api/phd2/profile/delete - Delete an equipment profile
+    /// </summary>
+    [Route(HttpVerbs.Post, "/phd2/profile/delete")]
+    public async Task<ApiResponse> DeletePHD2Profile()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            
+            if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile name is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            string profileName = requestData["name"].ToString();
+            
+            if (string.IsNullOrEmpty(profileName))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile name cannot be empty",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            bool result = await phd2Service.DeleteProfileAsync(profileName);
+
+            if (!result)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = phd2Service.LastError ?? "Failed to delete profile",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { ProfileName = profileName, Deleted = true },
+                StatusCode = 200,
+                Type = "PHD2Profile"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// POST /api/phd2/profile/rename - Rename the current equipment profile
+    /// </summary>
+    [Route(HttpVerbs.Post, "/phd2/profile/rename")]
+    public async Task<ApiResponse> RenamePHD2Profile()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            
+            if (requestData == null || !requestData.ContainsKey("name") || requestData["name"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "New profile name is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            string newName = requestData["name"].ToString();
+            
+            if (string.IsNullOrEmpty(newName))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile name cannot be empty",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            bool result = await phd2Service.RenameProfileAsync(newName);
+
+            if (!result)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = phd2Service.LastError ?? "Failed to rename profile",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { NewName = newName, Renamed = true },
+                StatusCode = 200,
+                Type = "PHD2Profile"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/profile/select - Select an equipment profile by ID
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/profile/select")]
+    public async Task<ApiResponse> SelectPHD2Profile()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            
+            if (requestData == null || !requestData.ContainsKey("id") || requestData["id"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile ID is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["id"].ToString(), out int profileId) || profileId <= 0)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Profile ID must be a valid positive integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            bool result = await phd2Service.SetProfileAsync(profileId);
+
+            if (!result)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = phd2Service.LastError ?? "Failed to select profile",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { ProfileId = profileId, Selected = true },
+                StatusCode = 200,
+                Type = "PHD2Profile"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -193,23 +516,31 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/connect-equipment - Connect equipment with profile
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/connect-equipment")]
-    public async Task<ApiResponse> ConnectPHD2Equipment() {
-        try {
+    public async Task<ApiResponse> ConnectPHD2Equipment()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             string profileName = null;
 
-            try {
+            try
+            {
                 var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                if (requestData != null && requestData.ContainsKey("profileName") && requestData["profileName"] != null) {
+                if (requestData != null && requestData.ContainsKey("profileName") && requestData["profileName"] != null)
+                {
                     profileName = requestData["profileName"].ToString();
                 }
-            } catch {
+            }
+            catch
+            {
                 // Handle parsing errors
             }
 
-            if (string.IsNullOrEmpty(profileName)) {
+            if (string.IsNullOrEmpty(profileName))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "Profile name is required",
                     StatusCode = 400,
@@ -219,16 +550,20 @@ public class PHD2Controller : WebApiController
 
             bool result = await phd2Service.ConnectEquipmentAsync(profileName);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { EquipmentConnected = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Equipment"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -241,21 +576,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/disconnect-equipment - Disconnect equipment
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/disconnect-equipment")]
-    public async Task<ApiResponse> DisconnectPHD2Equipment() {
-        try {
+    public async Task<ApiResponse> DisconnectPHD2Equipment()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             bool result = await phd2Service.DisconnectEquipmentAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { EquipmentDisconnected = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Equipment"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -268,48 +609,64 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/start-guiding - Start guiding
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/start-guiding")]
-    public async Task<ApiResponse> StartPHD2Guiding() {
-        try {
+    public async Task<ApiResponse> StartPHD2Guiding()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             double settlePixels = 2.0;
             double settleTime = 10.0;
             double settleTimeout = 100.0;
 
-            try {
+            try
+            {
                 var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                if (requestData != null) {
-                    if (requestData.ContainsKey("settlePixels") && requestData["settlePixels"] != null) {
-                        if (double.TryParse(requestData["settlePixels"].ToString(), out double parsedSettlePixels)) {
+                if (requestData != null)
+                {
+                    if (requestData.ContainsKey("settlePixels") && requestData["settlePixels"] != null)
+                    {
+                        if (double.TryParse(requestData["settlePixels"].ToString(), out double parsedSettlePixels))
+                        {
                             settlePixels = parsedSettlePixels;
                         }
                     }
-                    if (requestData.ContainsKey("settleTime") && requestData["settleTime"] != null) {
-                        if (double.TryParse(requestData["settleTime"].ToString(), out double parsedSettleTime)) {
+                    if (requestData.ContainsKey("settleTime") && requestData["settleTime"] != null)
+                    {
+                        if (double.TryParse(requestData["settleTime"].ToString(), out double parsedSettleTime))
+                        {
                             settleTime = parsedSettleTime;
                         }
                     }
-                    if (requestData.ContainsKey("settleTimeout") && requestData["settleTimeout"] != null) {
-                        if (double.TryParse(requestData["settleTimeout"].ToString(), out double parsedSettleTimeout)) {
+                    if (requestData.ContainsKey("settleTimeout") && requestData["settleTimeout"] != null)
+                    {
+                        if (double.TryParse(requestData["settleTimeout"].ToString(), out double parsedSettleTimeout))
+                        {
                             settleTimeout = parsedSettleTimeout;
                         }
                     }
                 }
-            } catch {
+            }
+            catch
+            {
                 // Use defaults if parsing fails
             }
 
             bool result = await phd2Service.StartGuidingAsync(settlePixels, settleTime, settleTimeout);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { GuidingStarted = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Guiding"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -322,21 +679,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/stop-guiding - Stop guiding
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/stop-guiding")]
-    public async Task<ApiResponse> StopPHD2Guiding() {
-        try {
+    public async Task<ApiResponse> StopPHD2Guiding()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             bool result = await phd2Service.StopGuidingAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { GuidingStopped = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Guiding"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -349,54 +712,72 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/dither - Dither guiding star
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/dither")]
-    public async Task<ApiResponse> DitherPHD2() {
-        try {
+    public async Task<ApiResponse> DitherPHD2()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             double ditherPixels = 3.0;
             double settlePixels = 2.0;
             double settleTime = 10.0;
             double settleTimeout = 100.0;
 
-            try {
+            try
+            {
                 var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-                if (requestData != null) {
-                    if (requestData.ContainsKey("ditherPixels") && requestData["ditherPixels"] != null) {
-                        if (double.TryParse(requestData["ditherPixels"].ToString(), out double parsedDitherPixels)) {
+                if (requestData != null)
+                {
+                    if (requestData.ContainsKey("ditherPixels") && requestData["ditherPixels"] != null)
+                    {
+                        if (double.TryParse(requestData["ditherPixels"].ToString(), out double parsedDitherPixels))
+                        {
                             ditherPixels = parsedDitherPixels;
                         }
                     }
-                    if (requestData.ContainsKey("settlePixels") && requestData["settlePixels"] != null) {
-                        if (double.TryParse(requestData["settlePixels"].ToString(), out double parsedSettlePixels)) {
+                    if (requestData.ContainsKey("settlePixels") && requestData["settlePixels"] != null)
+                    {
+                        if (double.TryParse(requestData["settlePixels"].ToString(), out double parsedSettlePixels))
+                        {
                             settlePixels = parsedSettlePixels;
                         }
                     }
-                    if (requestData.ContainsKey("settleTime") && requestData["settleTime"] != null) {
-                        if (double.TryParse(requestData["settleTime"].ToString(), out double parsedSettleTime)) {
+                    if (requestData.ContainsKey("settleTime") && requestData["settleTime"] != null)
+                    {
+                        if (double.TryParse(requestData["settleTime"].ToString(), out double parsedSettleTime))
+                        {
                             settleTime = parsedSettleTime;
                         }
                     }
-                    if (requestData.ContainsKey("settleTimeout") && requestData["settleTimeout"] != null) {
-                        if (double.TryParse(requestData["settleTimeout"].ToString(), out double parsedSettleTimeout)) {
+                    if (requestData.ContainsKey("settleTimeout") && requestData["settleTimeout"] != null)
+                    {
+                        if (double.TryParse(requestData["settleTimeout"].ToString(), out double parsedSettleTimeout))
+                        {
                             settleTimeout = parsedSettleTimeout;
                         }
                     }
                 }
-            } catch {
+            }
+            catch
+            {
                 // Use defaults if parsing fails
             }
 
             bool result = await phd2Service.DitherAsync(ditherPixels, settlePixels, settleTime, settleTimeout);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { DitherStarted = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Dither"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -409,21 +790,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/pause - Pause guiding
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/pause")]
-    public async Task<ApiResponse> PausePHD2() {
-        try {
+    public async Task<ApiResponse> PausePHD2()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             bool result = await phd2Service.PauseGuidingAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { Paused = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Pause"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -436,21 +823,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/unpause - Resume guiding
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/unpause")]
-    public async Task<ApiResponse> UnpausePHD2() {
-        try {
+    public async Task<ApiResponse> UnpausePHD2()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             bool result = await phd2Service.UnpauseGuidingAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { Unpaused = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Pause"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -463,21 +856,27 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/start-looping - Start looping exposures
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/start-looping")]
-    public async Task<ApiResponse> StartPHD2Looping() {
-        try {
+    public async Task<ApiResponse> StartPHD2Looping()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             bool result = await phd2Service.StartLoopingAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = result,
                 Response = new { LoopingStarted = result, Error = phd2Service.LastError },
                 StatusCode = result ? 200 : 400,
                 Type = "PHD2Looping"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -490,21 +889,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/settling - Get settling status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/settling")]
-    public async Task<ApiResponse> GetPHD2Settling() {
-        try {
+    public async Task<ApiResponse> GetPHD2Settling()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var settling = await phd2Service.CheckSettlingAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = settling,
                 StatusCode = 200,
                 Type = "PHD2Settling"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -517,21 +922,116 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/pixel-scale - Get pixel scale
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/pixel-scale")]
-    public async Task<ApiResponse> GetPHD2PixelScale() {
-        try {
+    public async Task<ApiResponse> GetPHD2PixelScale()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var pixelScale = await phd2Service.GetPixelScaleAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { PixelScale = pixelScale },
                 StatusCode = 200,
                 Type = "PHD2PixelScale"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/calibration/focal-length - Get focal length
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration/focal-length")]
+    public async Task<ApiResponse> GetPHD2FocalLength()
+        {
+            try
+            {
+                EnsurePHD2ServicesInitialized();
+                var focalLength = await phd2Service.GetFocalLengthAsync();
+
+                return new ApiResponse
+                {
+                    Success = true,
+                    Response = new { FocalLength = focalLength },
+                    StatusCode = 200,
+                    Type = "PHD2FocalLength"
+                };
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex);
+                HttpContext.Response.StatusCode = 500;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = ex.Message,
+                    StatusCode = 500,
+                    Type = "Error"
+                };
+            }
+        }
+
+        /// <summary>
+        /// PUT /api/phd2/focal-length - Set focal length
+        /// </summary>
+        [Route(HttpVerbs.Put, "/phd2/calibration/focal-length")]
+        public async Task<ApiResponse> SetPHD2FocalLength()
+        {
+            try
+            {
+                EnsurePHD2ServicesInitialized();
+                var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+                if (requestData == null || !requestData.ContainsKey("focalLength") || requestData["focalLength"] == null)
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "focalLength parameter is required",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                if (!int.TryParse(requestData["focalLength"].ToString(), out int focalLength))
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "focalLength must be a valid integer",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }            await phd2Service.SetFocalLengthAsync(focalLength);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { FocalLength = focalLength },
+                StatusCode = 200,
+                Type = "PHD2FocalLength"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -544,8 +1044,10 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/all-info - Get comprehensive PHD2 information
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/all-info")]
-    public async Task<ApiResponse> GetAllPHD2Info() {
-        try {
+    public async Task<ApiResponse> GetAllPHD2Info()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             // Get all available PHD2 information in parallel
             var statusTask = phd2Service.GetStatusAsync();
@@ -569,16 +1071,19 @@ public class PHD2Controller : WebApiController
                     var starImage = await phd2Service.GetStarImageAsync(15); // Get minimal size star image for info
                     if (starImage != null)
                     {
-                        starImageInfo = new {
+                        starImageInfo = new
+                        {
                             Available = true,
                             Frame = starImage.Frame,
                             Width = starImage.Width,
                             Height = starImage.Height,
-                            StarPosition = new {
+                            StarPosition = new
+                            {
                                 X = starImage.StarPosX,
                                 Y = starImage.StarPosY
                             },
-                            StarInfo = status?.CurrentStar != null ? new {
+                            StarInfo = status?.CurrentStar != null ? new
+                            {
                                 SNR = status.CurrentStar.SNR,
                                 HFD = status.CurrentStar.HFD,
                                 StarMass = status.CurrentStar.StarMass,
@@ -592,7 +1097,8 @@ public class PHD2Controller : WebApiController
             catch (Exception ex)
             {
                 Logger.Debug($"Could not get star image info: {ex.Message}");
-                starImageInfo = new {
+                starImageInfo = new
+                {
                     Available = false,
                     Error = ex.Message
                 };
@@ -600,14 +1106,17 @@ public class PHD2Controller : WebApiController
 
             if (starImageInfo == null)
             {
-                starImageInfo = new {
+                starImageInfo = new
+                {
                     Available = false,
                     Reason = "Not guiding or looping"
                 };
             }
 
-            var allInfo = new {
-                Connection = new {
+            var allInfo = new
+            {
+                Connection = new
+                {
                     IsConnected = phd2Service.IsConnected,
                     LastError = phd2Service.LastError
                 },
@@ -616,14 +1125,16 @@ public class PHD2Controller : WebApiController
                 Settling = settling,
                 PixelScale = pixelScale,
                 StarImage = starImageInfo,
-                Capabilities = new {
+                Capabilities = new
+                {
                     CanGuide = phd2Service.IsConnected && (status?.AppState == "Guiding" || status?.AppState == "Looping" || status?.AppState == "Stopped"),
                     CanDither = phd2Service.IsConnected && status?.AppState == "Guiding",
                     CanPause = phd2Service.IsConnected && status?.AppState == "Guiding",
                     CanLoop = phd2Service.IsConnected && status?.AppState == "Stopped",
                     CanGetStarImage = phd2Service.IsConnected && (status?.AppState == "Guiding" || status?.AppState == "Looping")
                 },
-                GuideStats = status?.Stats != null ? new {
+                GuideStats = status?.Stats != null ? new
+                {
                     RmsTotal = status.Stats.RmsTotal,
                     RmsRA = status.Stats.RmsRA,
                     RmsDec = status.Stats.RmsDec,
@@ -631,7 +1142,8 @@ public class PHD2Controller : WebApiController
                     PeakDec = status.Stats.PeakDec,
                     AvgDistance = status.AvgDist
                 } : null,
-                StarLostInfo = status?.LastStarLost != null ? new {
+                StarLostInfo = status?.LastStarLost != null ? new
+                {
                     Frame = status.LastStarLost.Frame,
                     Time = status.LastStarLost.Time,
                     StarMass = status.LastStarLost.StarMass,
@@ -642,7 +1154,8 @@ public class PHD2Controller : WebApiController
                     Timestamp = status.LastStarLost.Timestamp,
                     TimeSinceLost = DateTime.Now - status.LastStarLost.Timestamp
                 } : null,
-                ServerInfo = new {
+                ServerInfo = new
+                {
                     PHD2Version = status?.Version,
                     PHD2Subversion = status?.PHDSubver,
                     AppState = status?.AppState,
@@ -651,16 +1164,20 @@ public class PHD2Controller : WebApiController
                 }
             };
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = allInfo,
                 StatusCode = 200,
                 Type = "PHD2AllInfo"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -675,13 +1192,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-exposure - Set exposure time
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-exposure")]
-    public async Task<ApiResponse> SetPHD2Exposure() {
-        try {
+    public async Task<ApiResponse> SetPHD2Exposure()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("exposureMs") || requestData["exposureMs"] == null) {
+            if (requestData == null || !requestData.ContainsKey("exposureMs") || requestData["exposureMs"] == null)
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "exposureMs parameter is required",
                     StatusCode = 400,
@@ -689,9 +1210,11 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            if (!int.TryParse(requestData["exposureMs"].ToString(), out int exposureMs)) {
+            if (!int.TryParse(requestData["exposureMs"].ToString(), out int exposureMs))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "exposureMs must be a valid integer",
                     StatusCode = 400,
@@ -701,16 +1224,20 @@ public class PHD2Controller : WebApiController
 
             await phd2Service.SetExposureAsync(exposureMs);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { ExposureSet = exposureMs },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -723,21 +1250,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-exposure - Get exposure time
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-exposure")]
-    public async Task<ApiResponse> GetPHD2Exposure() {
-        try {
+    public async Task<ApiResponse> GetPHD2Exposure()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var exposure = await phd2Service.GetExposureAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Exposure = exposure },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -750,13 +1283,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-dec-guide-mode - Set declination guide mode
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-dec-guide-mode")]
-    public async Task<ApiResponse> SetPHD2DecGuideMode() {
-        try {
+    public async Task<ApiResponse> SetPHD2DecGuideMode()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("mode") || requestData["mode"] == null) {
+            if (requestData == null || !requestData.ContainsKey("mode") || requestData["mode"] == null)
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "mode parameter is required",
                     StatusCode = 400,
@@ -767,16 +1304,20 @@ public class PHD2Controller : WebApiController
             string mode = requestData["mode"].ToString();
             await phd2Service.SetDecGuideModeAsync(mode);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { DecGuideModeSet = mode },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -789,21 +1330,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-dec-guide-mode - Get declination guide mode
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-dec-guide-mode")]
-    public async Task<ApiResponse> GetPHD2DecGuideMode() {
-        try {
+    public async Task<ApiResponse> GetPHD2DecGuideMode()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var mode = await phd2Service.GetDecGuideModeAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { DecGuideMode = mode },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -816,13 +1363,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-guide-output-enabled - Enable/disable guide output
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-guide-output-enabled")]
-    public async Task<ApiResponse> SetPHD2GuideOutputEnabled() {
-        try {
+    public async Task<ApiResponse> SetPHD2GuideOutputEnabled()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("enabled") || requestData["enabled"] == null) {
+            if (requestData == null || !requestData.ContainsKey("enabled") || requestData["enabled"] == null)
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled parameter is required",
                     StatusCode = 400,
@@ -830,9 +1381,11 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled)) {
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled must be a valid boolean",
                     StatusCode = 400,
@@ -842,16 +1395,20 @@ public class PHD2Controller : WebApiController
 
             await phd2Service.SetGuideOutputEnabledAsync(enabled);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { GuideOutputEnabled = enabled },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -864,21 +1421,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-guide-output-enabled - Get guide output status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-guide-output-enabled")]
-    public async Task<ApiResponse> GetPHD2GuideOutputEnabled() {
-        try {
+    public async Task<ApiResponse> GetPHD2GuideOutputEnabled()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var enabled = await phd2Service.GetGuideOutputEnabledAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { GuideOutputEnabled = enabled },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -891,13 +1454,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-lock-position - Set lock position
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-lock-position")]
-    public async Task<ApiResponse> SetPHD2LockPosition() {
-        try {
+    public async Task<ApiResponse> SetPHD2LockPosition()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("x") || !requestData.ContainsKey("y")) {
+            if (requestData == null || !requestData.ContainsKey("x") || !requestData.ContainsKey("y"))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "x and y parameters are required",
                     StatusCode = 400,
@@ -906,9 +1473,11 @@ public class PHD2Controller : WebApiController
             }
 
             if (!double.TryParse(requestData["x"].ToString(), out double x) ||
-                !double.TryParse(requestData["y"].ToString(), out double y)) {
+                !double.TryParse(requestData["y"].ToString(), out double y))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "x and y must be valid numbers",
                     StatusCode = 400,
@@ -917,22 +1486,27 @@ public class PHD2Controller : WebApiController
             }
 
             bool exact = true;
-            if (requestData.ContainsKey("exact") && requestData["exact"] != null) {
+            if (requestData.ContainsKey("exact") && requestData["exact"] != null)
+            {
                 bool.TryParse(requestData["exact"].ToString(), out exact);
             }
 
             await phd2Service.SetLockPositionAsync(x, y, exact);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockPositionSet = new { X = x, Y = y, Exact = exact } },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -945,14 +1519,18 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-lock-position - Get lock position
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-lock-position")]
-    public async Task<ApiResponse> GetPHD2LockPosition() {
-        try {
+    public async Task<ApiResponse> GetPHD2LockPosition()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var position = await phd2Service.GetLockPositionAsync();
 
-            if (position == null || position.Length < 2) {
+            if (position == null || position.Length < 2)
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "Keine Daten vorhanden - PHD2 ist derzeit nicht am guidenden oder es wurde keine Lock-Position festgelegt",
                     StatusCode = 400,
@@ -960,25 +1538,32 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockPosition = new { X = position[0], Y = position[1] } },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (InvalidOperationException ex) when (ex.Message.Contains("PHD2 not connected")) {
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("PHD2 not connected"))
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = "PHD2 ist nicht erreichbar",
                 StatusCode = 500,
                 Type = "PHD2NotConnected"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = "Keine Daten vorhanden - " + ex.Message,
                 StatusCode = 400,
@@ -991,38 +1576,53 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/find-star - Auto-select a star
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/find-star")]
-    public async Task<ApiResponse> FindPHD2Star() {
-        try {
+    public async Task<ApiResponse> FindPHD2Star()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
             int[] roi = null;
 
             // Parse optional ROI parameter
-            if (requestData != null && requestData.ContainsKey("roi") && requestData["roi"] != null) {
-                try {
+            if (requestData != null && requestData.ContainsKey("roi") && requestData["roi"] != null)
+            {
+                try
+                {
                     var roiData = requestData["roi"];
-                    if (roiData is Newtonsoft.Json.Linq.JArray roiArray && roiArray.Count == 4) {
+                    if (roiData is Newtonsoft.Json.Linq.JArray roiArray && roiArray.Count == 4)
+                    {
                         roi = new int[4];
-                        for (int i = 0; i < 4; i++) {
+                        for (int i = 0; i < 4; i++)
+                        {
                             roi[i] = (int)roiArray[i];
                         }
-                    } else if (roiData is System.Collections.Generic.List<object> roiList && roiList.Count == 4) {
+                    }
+                    else if (roiData is System.Collections.Generic.List<object> roiList && roiList.Count == 4)
+                    {
                         roi = new int[4];
-                        for (int i = 0; i < 4; i++) {
+                        for (int i = 0; i < 4; i++)
+                        {
                             roi[i] = Convert.ToInt32(roiList[i]);
                         }
-                    } else {
+                    }
+                    else
+                    {
                         HttpContext.Response.StatusCode = 400;
-                        return new ApiResponse {
+                        return new ApiResponse
+                        {
                             Success = false,
                             Error = "roi must be an array of 4 integers: [x, y, width, height]",
                             StatusCode = 400,
                             Type = "Error"
                         };
                     }
-                } catch {
+                }
+                catch
+                {
                     HttpContext.Response.StatusCode = 400;
-                    return new ApiResponse {
+                    return new ApiResponse
+                    {
                         Success = false,
                         Error = "roi must be an array of 4 integers: [x, y, width, height]",
                         StatusCode = 400,
@@ -1033,19 +1633,24 @@ public class PHD2Controller : WebApiController
 
             var position = await phd2Service.FindStarAsync(roi);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
-                Response = new {
+                Response = new
+                {
                     StarPosition = new { X = position[0], Y = position[1] },
                     ROI = roi != null ? new { X = roi[0], Y = roi[1], Width = roi[2], Height = roi[3] } : null
                 },
                 StatusCode = 200,
                 Type = "PHD2StarSelection"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1058,13 +1663,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-lock-shift-enabled - Enable/disable lock shift
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-lock-shift-enabled")]
-    public async Task<ApiResponse> SetPHD2LockShiftEnabled() {
-        try {
+    public async Task<ApiResponse> SetPHD2LockShiftEnabled()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("enabled") || requestData["enabled"] == null) {
+            if (requestData == null || !requestData.ContainsKey("enabled") || requestData["enabled"] == null)
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled parameter is required",
                     StatusCode = 400,
@@ -1072,9 +1681,11 @@ public class PHD2Controller : WebApiController
                 };
             }
 
-            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled)) {
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled must be a valid boolean",
                     StatusCode = 400,
@@ -1084,16 +1695,20 @@ public class PHD2Controller : WebApiController
 
             await phd2Service.SetLockShiftEnabledAsync(enabled);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockShiftEnabled = enabled },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1106,21 +1721,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-lock-shift-enabled - Get lock shift status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-lock-shift-enabled")]
-    public async Task<ApiResponse> GetPHD2LockShiftEnabled() {
-        try {
+    public async Task<ApiResponse> GetPHD2LockShiftEnabled()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var enabled = await phd2Service.GetLockShiftEnabledAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockShiftEnabled = enabled },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1133,13 +1754,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-lock-shift-params - Set lock shift parameters
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-lock-shift-params")]
-    public async Task<ApiResponse> SetPHD2LockShiftParams() {
-        try {
+    public async Task<ApiResponse> SetPHD2LockShiftParams()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("xRate") || !requestData.ContainsKey("yRate")) {
+            if (requestData == null || !requestData.ContainsKey("xRate") || !requestData.ContainsKey("yRate"))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "xRate and yRate parameters are required",
                     StatusCode = 400,
@@ -1148,9 +1773,11 @@ public class PHD2Controller : WebApiController
             }
 
             if (!double.TryParse(requestData["xRate"].ToString(), out double xRate) ||
-                !double.TryParse(requestData["yRate"].ToString(), out double yRate)) {
+                !double.TryParse(requestData["yRate"].ToString(), out double yRate))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "xRate and yRate must be valid numbers",
                     StatusCode = 400,
@@ -1160,25 +1787,31 @@ public class PHD2Controller : WebApiController
 
             string units = "arcsec/hr";
             string axes = "RA/Dec";
-            if (requestData.ContainsKey("units") && requestData["units"] != null) {
+            if (requestData.ContainsKey("units") && requestData["units"] != null)
+            {
                 units = requestData["units"].ToString();
             }
-            if (requestData.ContainsKey("axes") && requestData["axes"] != null) {
+            if (requestData.ContainsKey("axes") && requestData["axes"] != null)
+            {
                 axes = requestData["axes"].ToString();
             }
 
             await phd2Service.SetLockShiftParamsAsync(xRate, yRate, units, axes);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockShiftParamsSet = new { XRate = xRate, YRate = yRate, Units = units, Axes = axes } },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1191,21 +1824,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-lock-shift-params - Get lock shift parameters
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-lock-shift-params")]
-    public async Task<ApiResponse> GetPHD2LockShiftParams() {
-        try {
+    public async Task<ApiResponse> GetPHD2LockShiftParams()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var parameters = await phd2Service.GetLockShiftParamsAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { LockShiftParams = parameters },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1218,13 +1857,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-algo-param - Set algorithm parameter
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-algo-param")]
-    public async Task<ApiResponse> SetPHD2AlgoParam() {
-        try {
+    public async Task<ApiResponse> SetPHD2AlgoParam()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("axis") || !requestData.ContainsKey("name") || !requestData.ContainsKey("value")) {
+            if (requestData == null || !requestData.ContainsKey("axis") || !requestData.ContainsKey("name") || !requestData.ContainsKey("value"))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "axis, name, and value parameters are required",
                     StatusCode = 400,
@@ -1235,9 +1878,11 @@ public class PHD2Controller : WebApiController
             string axis = requestData["axis"].ToString();
             string name = requestData["name"].ToString();
 
-            if (!double.TryParse(requestData["value"].ToString(), out double value)) {
+            if (!double.TryParse(requestData["value"].ToString(), out double value))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "value must be a valid number",
                     StatusCode = 400,
@@ -1247,25 +1892,32 @@ public class PHD2Controller : WebApiController
 
             await phd2Service.SetAlgoParamAsync(axis, name, value);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Message = $"Algorithm parameter set: {axis}.{name} = {value}" },
                 StatusCode = 200,
                 Type = "PHD2AlgoParamSet"
             };
-        } catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis")) {
+        }
+        catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis"))
+        {
             // Expected behavior for invalid axis parameter
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 400,
                 Type = "PHD2InvalidAxis"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1278,30 +1930,39 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-algo-param-names - Get algorithm parameter names
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-algo-param-names")]
-    public async Task<ApiResponse> GetPHD2AlgoParamNames([QueryField(true)] string axis) {
-        try {
+    public async Task<ApiResponse> GetPHD2AlgoParamNames([QueryField(true)] string axis)
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var paramNames = await phd2Service.GetAlgoParamNamesAsync(axis);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Axis = axis, ParameterNames = paramNames },
                 StatusCode = 200,
                 Type = "PHD2AlgoParamNames"
             };
-        } catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis")) {
+        }
+        catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis"))
+        {
             // Expected behavior for invalid axis parameter
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 400,
                 Type = "PHD2InvalidAxis"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1314,30 +1975,39 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-algo-param - Get algorithm parameter value
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-algo-param")]
-    public async Task<ApiResponse> GetPHD2AlgoParam([QueryField(true)] string axis, [QueryField(true)] string name) {
-        try {
+    public async Task<ApiResponse> GetPHD2AlgoParam([QueryField(true)] string axis, [QueryField(true)] string name)
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var value = await phd2Service.GetAlgoParamAsync(axis, name);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Axis = axis, Name = name, Value = value },
                 StatusCode = 200,
                 Type = "PHD2AlgoParam"
             };
-        } catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis") || ex.Message.Contains("could not get param")) {
+        }
+        catch (PHD2Exception ex) when (ex.Message.Contains("Invalid axis") || ex.Message.Contains("could not get param"))
+        {
             // Expected behavior for invalid axis or parameter names
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 400,
                 Type = ex.Message.Contains("Invalid axis") ? "PHD2InvalidAxis" : "PHD2ParamNotFound"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1350,13 +2020,17 @@ public class PHD2Controller : WebApiController
     /// POST /api/phd2/set-variable-delay-settings - Set variable delay settings
     /// </summary>
     [Route(HttpVerbs.Post, "/phd2/set-variable-delay-settings")]
-    public async Task<ApiResponse> SetPHD2VariableDelaySettings() {
-        try {
+    public async Task<ApiResponse> SetPHD2VariableDelaySettings()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
-            if (requestData == null || !requestData.ContainsKey("enabled") || !requestData.ContainsKey("shortDelaySeconds") || !requestData.ContainsKey("longDelaySeconds")) {
+            if (requestData == null || !requestData.ContainsKey("enabled") || !requestData.ContainsKey("shortDelaySeconds") || !requestData.ContainsKey("longDelaySeconds"))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled, shortDelaySeconds, and longDelaySeconds parameters are required",
                     StatusCode = 400,
@@ -1366,9 +2040,11 @@ public class PHD2Controller : WebApiController
 
             if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled) ||
                 !int.TryParse(requestData["shortDelaySeconds"].ToString(), out int shortDelaySeconds) ||
-                !int.TryParse(requestData["longDelaySeconds"].ToString(), out int longDelaySeconds)) {
+                !int.TryParse(requestData["longDelaySeconds"].ToString(), out int longDelaySeconds))
+            {
                 HttpContext.Response.StatusCode = 400;
-                return new ApiResponse {
+                return new ApiResponse
+                {
                     Success = false,
                     Error = "enabled must be boolean, shortDelaySeconds and longDelaySeconds must be integers",
                     StatusCode = 400,
@@ -1378,25 +2054,32 @@ public class PHD2Controller : WebApiController
 
             await phd2Service.SetVariableDelaySettingsAsync(enabled, shortDelaySeconds, longDelaySeconds);
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Message = $"Variable delay settings updated: enabled={enabled}, short={shortDelaySeconds}s, long={longDelaySeconds}s" },
                 StatusCode = 200,
                 Type = "PHD2VariableDelaySet"
             };
-        } catch (PHD2Exception ex) when (ex.Message.Contains("method not found")) {
+        }
+        catch (PHD2Exception ex) when (ex.Message.Contains("method not found"))
+        {
             // Expected behavior for unsupported PHD2 versions
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 400,
                 Type = "PHD2MethodNotFound"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1409,30 +2092,39 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-variable-delay-settings - Get variable delay settings
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-variable-delay-settings")]
-    public async Task<ApiResponse> GetPHD2VariableDelaySettings() {
-        try {
+    public async Task<ApiResponse> GetPHD2VariableDelaySettings()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var settings = await phd2Service.GetVariableDelaySettingsAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = settings,
                 StatusCode = 200,
                 Type = "PHD2VariableDelay"
             };
-        } catch (PHD2Exception ex) when (ex.Message.Contains("method not found")) {
+        }
+        catch (PHD2Exception ex) when (ex.Message.Contains("method not found"))
+        {
             // Expected behavior for unsupported PHD2 versions
             HttpContext.Response.StatusCode = 400;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 400,
                 Type = "PHD2MethodNotFound"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1445,21 +2137,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-connected - Get connection status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-connected")]
-    public async Task<ApiResponse> GetPHD2Connected() {
-        try {
+    public async Task<ApiResponse> GetPHD2Connected()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var connected = await phd2Service.GetConnectedAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Connected = connected },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1472,21 +2170,27 @@ public class PHD2Controller : WebApiController
     /// GET /api/phd2/get-paused - Get paused status
     /// </summary>
     [Route(HttpVerbs.Get, "/phd2/get-paused")]
-    public async Task<ApiResponse> GetPHD2Paused() {
-        try {
+    public async Task<ApiResponse> GetPHD2Paused()
+    {
+        try
+        {
             EnsurePHD2ServicesInitialized();
             var paused = await phd2Service.GetPausedAsync();
 
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = true,
                 Response = new { Paused = paused },
                 StatusCode = 200,
                 Type = "PHD2Parameter"
             };
-        } catch (Exception ex) {
+        }
+        catch (Exception ex)
+        {
             Logger.Error(ex);
             HttpContext.Response.StatusCode = 500;
-            return new ApiResponse {
+            return new ApiResponse
+            {
                 Success = false,
                 Error = ex.Message,
                 StatusCode = 500,
@@ -1793,6 +2497,3742 @@ public class PHD2Controller : WebApiController
                 Type = "Error"
             });
             Response.OutputStream.Write(System.Text.Encoding.UTF8.GetBytes(errorResponse));
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/list - Get list of available cameras from PHD2 SHM
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/list")]
+    public async Task<ApiResponse> GetAvailableCameras()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var cameras = shmService.GetCameraList();
+            var selectedIndex = shmService.GetSelectedCameraIndex();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new
+                {
+                    Cameras = cameras,
+                    Count = cameras.Count,
+                    SelectedIndex = selectedIndex >= 0 ? selectedIndex : -1
+                },
+                StatusCode = 200,
+                Type = "PHD2Cameras"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/selected - Get the currently selected camera
+    /// PUT /api/phd2/camera/selected - Set the selected camera
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/selected")]
+    [Route(HttpVerbs.Put, "/phd2/camera/selected")]
+    public async Task<ApiResponse> SelectedCamera()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            // Handle PUT request (update)
+            if (HttpContext.Request.HttpMethod == "PUT")
+            {
+                uint cameraIndex = 0;
+
+                try
+                {
+                    var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+                    if (requestData != null && requestData.ContainsKey("index"))
+                    {
+                        if (uint.TryParse(requestData["index"].ToString(), out uint index))
+                        {
+                            cameraIndex = index;
+                        }
+                        else
+                        {
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = "Invalid index format",
+                                StatusCode = 400,
+                                Type = "Error"
+                            };
+                        }
+                    }
+                }
+                catch
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Failed to parse request",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                var shmService = new PHD2SHMService();
+                var cameras = shmService.GetCameraList();
+
+                if (cameraIndex >= cameras.Count)
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Camera index out of range",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                bool result = shmService.SetSelectedCameraIndex((int)cameraIndex);
+
+                return new ApiResponse
+                {
+                    Success = result,
+                    Response = new
+                    {
+                        Index = cameraIndex,
+                        Name = cameras[(int)cameraIndex],
+                        Changed = result
+                    },
+                    StatusCode = result ? 200 : 500,
+                    Type = "PHD2SelectedCamera"
+                };
+            }
+            // Handle GET request (retrieve)
+            else
+            {
+                var shmService = new PHD2SHMService();
+                var cameras = shmService.GetCameraList();
+                var selectedIndex = shmService.GetSelectedCameraIndex();
+
+                if (selectedIndex < 0 || selectedIndex >= cameras.Count)
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "No camera selected",
+                        StatusCode = 404,
+                        Type = "Error"
+                    };
+                }
+
+                return new ApiResponse
+                {
+                    Success = true,
+                    Response = new
+                    {
+                        Index = selectedIndex,
+                        Name = cameras[selectedIndex]
+                    },
+                    StatusCode = 200,
+                    Type = "PHD2SelectedCamera"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/instance/list - Get camera instances for the selected camera
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/instance/list")]
+    public async Task<ApiResponse> GetCameraInstances()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var instances = shmService.GetCameraInstances();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new
+                {
+                    Instances = instances,
+                    Count = instances.Count
+                },
+                StatusCode = 200,
+                Type = "PHD2CameraInstances"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/instance/selected - Get the currently selected camera instance
+    /// PUT /api/phd2/camera/instance/selected - Update the selected camera instance
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/instance/selected")]
+    [Route(HttpVerbs.Put, "/phd2/camera/instance/selected")]
+    public async Task<ApiResponse> SelectedCameraInstance()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            // Handle PUT request (update)
+            if (HttpContext.Request.HttpMethod == "PUT")
+            {
+                string instanceId = null;
+
+                try
+                {
+                    var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+                    if (requestData != null && requestData.ContainsKey("id"))
+                    {
+                        instanceId = requestData["id"]?.ToString();
+                    }
+                }
+                catch
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Failed to parse request",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                if (string.IsNullOrEmpty(instanceId))
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "instance id is required",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                var shmService = new PHD2SHMService();
+                bool result = shmService.SetSelectedCameraInstanceId(instanceId);
+
+                return new ApiResponse
+                {
+                    Success = result,
+                    Response = new
+                    {
+                        Id = instanceId,
+                        Changed = result
+                    },
+                    StatusCode = result ? 200 : 500,
+                    Type = "PHD2SelectedCameraInstance"
+                };
+            }
+            // Handle GET request
+            else
+            {
+                var shmService = new PHD2SHMService();
+                var selectedInstance = shmService.GetSelectedCameraInstance();
+
+                if (selectedInstance == null)
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "No camera instance selected",
+                        StatusCode = 404,
+                        Type = "Error"
+                    };
+                }
+
+                return new ApiResponse
+                {
+                    Success = true,
+                    Response = selectedInstance,
+                    StatusCode = 200,
+                    Type = "PHD2SelectedCameraInstance"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/mount/list - Get list of available mounts from PHD2 SHM
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/mount/list")]
+    public async Task<ApiResponse> GetAvailableMounts()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var mounts = shmService.GetMountList();
+            var selectedIndex = shmService.GetSelectedMountIndex();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new
+                {
+                    Mounts = mounts,
+                    Count = mounts.Count,
+                    SelectedIndex = selectedIndex >= 0 ? selectedIndex : -1
+                },
+                StatusCode = 200,
+                Type = "PHD2Mounts"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/mount/selected - Get the currently selected mount
+    /// PUT /api/phd2/mount/selected - Update the selected mount
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/mount/selected")]
+    [Route(HttpVerbs.Put, "/phd2/mount/selected")]
+    public async Task<ApiResponse> SelectedMount()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            // Handle PUT request (update)
+            if (HttpContext.Request.HttpMethod == "PUT")
+            {
+                uint mountIndex = 0;
+
+                try
+                {
+                    var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+                    if (requestData != null && requestData.ContainsKey("index"))
+                    {
+                        if (uint.TryParse(requestData["index"].ToString(), out uint index))
+                        {
+                            mountIndex = index;
+                        }
+                        else
+                        {
+                            HttpContext.Response.StatusCode = 400;
+                            return new ApiResponse
+                            {
+                                Success = false,
+                                Error = "Invalid index format",
+                                StatusCode = 400,
+                                Type = "Error"
+                            };
+                        }
+                    }
+                }
+                catch
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Failed to parse request",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                var shmService = new PHD2SHMService();
+                var mounts = shmService.GetMountList();
+
+                if (mountIndex >= mounts.Count)
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "Mount index out of range",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+
+                bool result = shmService.SetSelectedMountIndex((int)mountIndex);
+
+                return new ApiResponse
+                {
+                    Success = result,
+                    Response = new
+                    {
+                        Index = mountIndex,
+                        Name = mounts[(int)mountIndex],
+                        Changed = result
+                    },
+                    StatusCode = result ? 200 : 500,
+                    Type = "PHD2SelectedMount"
+                };
+            }
+            // Handle GET request (retrieve)
+            else
+            {
+                var shmService = new PHD2SHMService();
+                var mounts = shmService.GetMountList();
+                var selectedIndex = shmService.GetSelectedMountIndex();
+
+                if (selectedIndex < 0 || selectedIndex >= mounts.Count)
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "No mount selected",
+                        StatusCode = 404,
+                        Type = "Error"
+                    };
+                }
+
+                return new ApiResponse
+                {
+                    Success = true,
+                    Response = new
+                    {
+                        Index = selectedIndex,
+                        Name = mounts[selectedIndex]
+                    },
+                    StatusCode = 200,
+                    Type = "PHD2SelectedMount"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/option/list - Get available camera configuration options for selected camera
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/option/list")]
+    public async Task<ApiResponse> GetCameraOptions()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var options = shmService.GetCameraOptions();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new
+                {
+                    Options = options,
+                    Count = options.Count
+                },
+                StatusCode = 200,
+                Type = "PHD2CameraOptions"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/option - Get a camera option value
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/option")]
+    public async Task<ApiResponse> GetCameraOption([QueryField(true)] string name)
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            if (string.IsNullOrEmpty(name))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Option name is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var allOptions = shmService.GetCameraOptions();
+
+            // Check if selected camera has any options
+            if (allOptions.Count == 0)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Selected camera has no configurable options",
+                    StatusCode = 404,
+                    Type = "NoOptionsAvailable"
+                };
+            }
+
+            var value = shmService.GetCameraOptionValue(name);
+
+            if (value == null)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = $"Camera option '{name}' not found",
+                    StatusCode = 404,
+                    Type = "Error"
+                };
+            }
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new
+                {
+                    Name = name,
+                    Value = value
+                },
+                StatusCode = 200,
+                Type = "PHD2CameraOption"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/option - Set a camera option value
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/option")]
+    public async Task<ApiResponse> SetCameraOption()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            // Check if PHD2 is connected first
+            if (!phd2Service.IsConnected)
+            {
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "PHD2 is not connected",
+                    StatusCode = 400,
+                    Type = "PHD2NotConnected"
+                };
+            }
+
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("name") || !requestData.ContainsKey("value"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "name and value parameters are required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            string optionName = requestData["name"]?.ToString();
+            if (string.IsNullOrEmpty(optionName))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Option name cannot be empty",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["value"].ToString(), out int optionValue))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Option value must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            var shmService = new PHD2SHMService();
+            var allOptions = shmService.GetCameraOptions();
+
+            // Check if selected camera has any options
+            if (allOptions.Count == 0)
+            {
+                HttpContext.Response.StatusCode = 404;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "Selected camera has no configurable options",
+                    StatusCode = 404,
+                    Type = "NoOptionsAvailable"
+                };
+            }
+
+            bool result = shmService.SetCameraOptionValue(optionName, optionValue.ToString());
+
+            return new ApiResponse
+            {
+                Success = result,
+                Response = new
+                {
+                    Name = optionName,
+                    Value = optionValue,
+                    Changed = result
+                },
+                StatusCode = result ? 200 : 500,
+                Type = "PHD2CameraOption"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Calibration Step endpoints
+    /// <summary>
+    /// GET /api/phd2/calibration/step - Get calibration step
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration/step")]
+    public async Task<ApiResponse> GetCalibrationStep()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var step = await phd2Service.GetCalibrationStepAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CalibrationStep = step },
+                StatusCode = 200,
+                Type = "PHD2CalibrationStep"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/calibration/step - Set calibration step
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/calibration/step")]
+    public async Task<ApiResponse> SetCalibrationStep()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("calibrationStep") || requestData["calibrationStep"] == null)
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "calibrationStep parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["calibrationStep"].ToString(), out int step))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "calibrationStep must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCalibrationStepAsync(step);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CalibrationStep = step },
+                StatusCode = 200,
+                Type = "PHD2CalibrationStep"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// POST /api/phd2/calibration/clear - Clear mount calibration
+    /// </summary>
+    [Route(HttpVerbs.Post, "/phd2/calibration/clear")]
+    public async Task<ApiResponse> ClearMountCalibration()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            await phd2Service.ClearMountCalibrationAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { Message = "Mount calibration cleared" },
+                StatusCode = 200,
+                Type = "PHD2CalibrationCleared"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Auto-Restore Calibration endpoints
+    /// <summary>
+    /// GET /api/phd2/calibration/auto-restore - Get auto restore calibration
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration/auto-restore")]
+    public async Task<ApiResponse> GetAutoRestoreCalibration()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetAutoRestoreCalibrationsAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoRestoreCalibration = enabled },
+                StatusCode = 200,
+                Type = "PHD2AutoRestoreCalibration"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/calibration/auto-restore - Set auto restore calibration
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/calibration/auto-restore")]
+    public async Task<ApiResponse> SetAutoRestoreCalibration()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetAutoRestoreCalibrationsAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoRestoreCalibration = enabled },
+                StatusCode = 200,
+                Type = "PHD2AutoRestoreCalibration"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Assume Dec Orthogonal endpoints
+    /// <summary>
+    /// GET /api/phd2/calibration/assume-dec-orthogonal - Get assume DEC orthogonal
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration/assume-dec-orthogonal")]
+    public async Task<ApiResponse> GetAssumeDecOrthogonal()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetAssumeDecOrthogonalAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AssumeDecOrthogonal = enabled },
+                StatusCode = 200,
+                Type = "PHD2AssumeDecOrthogonal"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/calibration/assume-dec-orthogonal - Set assume DEC orthogonal
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/calibration/assume-dec-orthogonal")]
+    public async Task<ApiResponse> SetAssumeDecOrthogonal()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetAssumeDecOrthogonalAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AssumeDecOrthogonal = enabled },
+                StatusCode = 200,
+                Type = "PHD2AssumeDecOrthogonal"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // DEC Compensation endpoints
+    /// <summary>
+    /// GET /api/phd2/calibration/use-dec-compensation - Get use DEC compensation
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/calibration/use-dec-compensation")]
+    public async Task<ApiResponse> GetUseDecCompensation()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetUseDecCompensationAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { UseDecCompensation = enabled },
+                StatusCode = 200,
+                Type = "PHD2UseDecCompensation"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/calibration/use-dec-compensation - Set use DEC compensation
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/calibration/use-dec-compensation")]
+    public async Task<ApiResponse> SetUseDecCompensation()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetUseDecCompensationAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { UseDecCompensation = enabled },
+                StatusCode = 200,
+                Type = "PHD2UseDecCompensation"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Search Region endpoint
+    /// <summary>
+    /// GET /api/phd2/tracking/search-region - Get search region
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/search-region")]
+    public async Task<ApiResponse> GetSearchRegion()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var pixels = await phd2Service.GetSearchRegionAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SearchRegion = pixels },
+                StatusCode = 200,
+                Type = "PHD2SearchRegion"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/search-region - Set search region
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/search-region")]
+    public async Task<ApiResponse> SetSearchRegion()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("pixels"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "pixels parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["pixels"].ToString(), out int pixels))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "pixels must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetSearchRegionAsync(pixels);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SearchRegion = pixels },
+                StatusCode = 200,
+                Type = "PHD2SearchRegion"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Min Star HFR endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/min-star-hfr - Get minimum star HFR
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/min-star-hfr")]
+    public async Task<ApiResponse> GetMinStarHFR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var hfr = await phd2Service.GetMinStarHFRAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MinStarHFR = hfr },
+                StatusCode = 200,
+                Type = "PHD2MinStarHFR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/min-star-hfr - Set minimum star HFR
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/min-star-hfr")]
+    public async Task<ApiResponse> SetMinStarHFR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("hfr"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "hfr parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!double.TryParse(requestData["hfr"].ToString(), out double hfr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "hfr must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetMinStarHFRAsync(hfr);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MinStarHFR = hfr },
+                StatusCode = 200,
+                Type = "PHD2MinStarHFR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Max Star HFR endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/max-star-hfr - Get maximum star HFR
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/max-star-hfr")]
+    public async Task<ApiResponse> GetMaxStarHFR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var hfr = await phd2Service.GetMaxStarHFRAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MaxStarHFR = hfr },
+                StatusCode = 200,
+                Type = "PHD2MaxStarHFR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/max-star-hfr - Set maximum star HFR
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/max-star-hfr")]
+    public async Task<ApiResponse> SetMaxStarHFR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("hfr"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "hfr parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!double.TryParse(requestData["hfr"].ToString(), out double hfr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "hfr must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetMaxStarHFRAsync(hfr);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MaxStarHFR = hfr },
+                StatusCode = 200,
+                Type = "PHD2MaxStarHFR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Beep for Lost Star endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/beep-for-lost-star - Get beep for lost star
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/beep-for-lost-star")]
+    public async Task<ApiResponse> GetBeepForLostStar()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetBeepForLostStarAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { BeepForLostStar = enabled },
+                StatusCode = 200,
+                Type = "PHD2BeepForLostStar"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/beep-for-lost-star - Set beep for lost star
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/beep-for-lost-star")]
+    public async Task<ApiResponse> SetBeepForLostStar()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetBeepForLostStarAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { BeepForLostStar = enabled },
+                StatusCode = 200,
+                Type = "PHD2BeepForLostStar"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Mass Change Threshold endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/star-mass-detection - Get mass change threshold enabled
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/star-mass-detection")]
+    public async Task<ApiResponse> GetMassChangeThresholdEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetMassChangeThresholdEnabledAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MassChangeThresholdEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2MassChangeThresholdEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/star-mass-detection - Set mass change threshold enabled
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/star-mass-detection")]
+    public async Task<ApiResponse> SetMassChangeThresholdEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetMassChangeThresholdEnabledAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MassChangeThresholdEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2MassChangeThresholdEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/tracking/star-mass-detection/threshold - Get mass change threshold
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/star-mass-detection/threshold")]
+    public async Task<ApiResponse> GetMassChangeThreshold()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var threshold = await phd2Service.GetMassChangeThresholdAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MassChangeThreshold = threshold * 100d },
+                StatusCode = 200,
+                Type = "PHD2MassChangeThreshold"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/star-mass-detection/threshold - Set mass change threshold
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/star-mass-detection/threshold")]
+    public async Task<ApiResponse> SetMassChangeThreshold()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("threshold"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "threshold parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!double.TryParse(requestData["threshold"].ToString(), out double threshold))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "threshold must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetMassChangeThresholdAsync(threshold / 100d);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MassChangeThreshold = threshold },
+                StatusCode = 200,
+                Type = "PHD2MassChangeThreshold"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // AF Min Star SNR endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/min-star-snr - Get AutoFind minimum star SNR
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/min-star-snr")]
+    public async Task<ApiResponse> GetAFMinStarSNR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var snr = await phd2Service.GetAFMinStarSNRAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AFMinStarSNR = snr },
+                StatusCode = 200,
+                Type = "PHD2AFMinStarSNR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/min-star-snr - Set AutoFind minimum star SNR
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/min-star-snr")]
+    public async Task<ApiResponse> SetAFMinStarSNR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("snr"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "snr parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!double.TryParse(requestData["snr"].ToString(), out double snr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "snr must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetAFMinStarSNRAsync(snr);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AFMinStarSNR = snr },
+                StatusCode = 200,
+                Type = "PHD2AFMinStarSNR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Use Multiple Stars endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/multistar - Get use multiple stars
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/multistar")]
+    public async Task<ApiResponse> GetUseMultipleStars()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetUseMultipleStarsAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { UseMultipleStars = enabled },
+                StatusCode = 200,
+                Type = "PHD2UseMultipleStars"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/multistar - Set use multiple stars
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/multistar")]
+    public async Task<ApiResponse> SetUseMultipleStars()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetUseMultipleStarsAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { UseMultipleStars = enabled },
+                StatusCode = 200,
+                Type = "PHD2UseMultipleStars"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Auto Select Downsample endpoints
+    /// <summary>
+    /// GET /api/phd2/tracking/downsample - Get auto select downsample
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/tracking/downsample")]
+    public async Task<ApiResponse> GetAutoSelectDownsample()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var value = await phd2Service.GetAutoSelectDownsampleAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoSelectDownsample = value },
+                StatusCode = 200,
+                Type = "PHD2AutoSelectDownsample"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/tracking/downsample - Set auto select downsample
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/tracking/downsample")]
+    public async Task<ApiResponse> SetAutoSelectDownsample()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("value"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "value parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            string value = requestData["value"].ToString();
+            if (value != "Auto" && value != "1" && value != "2" && value != "3")
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "value must be 'Auto', '1', '2', or '3'",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetAutoSelectDownsampleAsync(value);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoSelectDownsample = value },
+                StatusCode = 200,
+                Type = "PHD2AutoSelectDownsample"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Always Scale Images endpoints
+    /// <summary>
+    /// GET /api/phd2/always-scale-images - Get always scale images
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/always-scale-images")]
+    public async Task<ApiResponse> GetAlwaysScaleImages()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetAlwaysScaleImagesAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AlwaysScaleImages = enabled },
+                StatusCode = 200,
+                Type = "PHD2AlwaysScaleImages"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/always-scale-images - Set always scale images
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/always-scale-images")]
+    public async Task<ApiResponse> SetAlwaysScaleImages()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetAlwaysScaleImagesAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AlwaysScaleImages = enabled },
+                StatusCode = 200,
+                Type = "PHD2AlwaysScaleImages"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Reverse DEC on Flip endpoints
+    /// <summary>
+    /// GET /api/phd2/reverse-dec-after-flip - Get reverse DEC after flip
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/reverse-dec-after-flip")]
+    public async Task<ApiResponse> GetReverseDecAfterFlip()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetReverseDecAfterFlipAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { ReverseDecAfterFlip = enabled },
+                StatusCode = 200,
+                Type = "PHD2ReverseDecAfterFlip"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/reverse-dec-after-flip - Set reverse DEC after flip
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/reverse-dec-after-flip")]
+    public async Task<ApiResponse> SetReverseDecAfterFlip()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetReverseDecAfterFlipAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { ReverseDecAfterFlip = enabled },
+                StatusCode = 200,
+                Type = "PHD2ReverseDecAfterFlip"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Fast Recenter endpoints
+    /// <summary>
+    /// GET /api/phd2/fast-recenter - Get fast recenter enabled
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/fast-recenter")]
+    public async Task<ApiResponse> GetFastRecenterEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetFastRecenterEnabledAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { FastRecenterEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2FastRecenterEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/fast-recenter - Set fast recenter enabled
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/fast-recenter")]
+    public async Task<ApiResponse> SetFastRecenterEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetFastRecenterEnabledAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { FastRecenterEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2FastRecenterEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Mount Guide Output endpoints
+    /// <summary>
+    /// GET /api/phd2/mount-guide-output - Get mount guide output enabled
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/mount-guide-output")]
+    public async Task<ApiResponse> GetMountGuideOutputEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var enabled = await phd2Service.GetMountGuideOutputEnabledAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MountGuideOutputEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2MountGuideOutputEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/mount-guide-output - Set mount guide output enabled
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/mount-guide-output")]
+    public async Task<ApiResponse> SetMountGuideOutputEnabled()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetMountGuideOutputEnabledAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { MountGuideOutputEnabled = enabled },
+                StatusCode = 200,
+                Type = "PHD2MountGuideOutputEnabled"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    // Camera control endpoints
+
+    /// <summary>
+    /// GET /api/phd2/guide/algorithm-ra - Get guide algorithm for RA axis
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/guide/algorithm-ra")]
+    public async Task<ApiResponse> GetGuideAlgorithmRA()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var algorithm = await phd2Service.GetGuideAlgorithmRAAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { GuideAlgorithmRA = algorithm },
+                StatusCode = 200,
+                Type = "PHD2GuideAlgorithmRA"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/guide/algorithm-ra - Set guide algorithm for RA axis
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/guide/algorithm-ra")]
+    public async Task<ApiResponse> SetGuideAlgorithmRA()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("algorithm"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "algorithm parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            var algorithm = requestData["algorithm"].ToString();
+            // Allowed display names
+            var allowed = new[] { "None", "Hysteresis", "Lowpass", "Lowpass2", "Resist Switch", "Predictive PEC", "ZFilter" };
+            if (!(algorithm == "None" || algorithm == "Hysteresis" || algorithm == "Lowpass" || algorithm == "Lowpass2" || algorithm == "Resist Switch" || algorithm == "Predictive PEC" || algorithm.StartsWith("ZFilter")))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "algorithm must be one of: None, Hysteresis, Lowpass, Lowpass2, Resist Switch, Predictive PEC, ZFilter*",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetGuideAlgorithmRAAsync(algorithm);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { GuideAlgorithmRA = algorithm },
+                StatusCode = 200,
+                Type = "PHD2GuideAlgorithmRA"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/guide/algorithm-dec - Get guide algorithm for DEC axis
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/guide/algorithm-dec")]
+    public async Task<ApiResponse> GetGuideAlgorithmDEC()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var algorithm = await phd2Service.GetGuideAlgorithmDECAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { GuideAlgorithmDEC = algorithm },
+                StatusCode = 200,
+                Type = "PHD2GuideAlgorithmDEC"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/guide/algorithm-dec - Set guide algorithm for DEC axis
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/guide/algorithm-dec")]
+    public async Task<ApiResponse> SetGuideAlgorithmDEC()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("algorithm"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "algorithm parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            var algorithm = requestData["algorithm"].ToString();
+            // Allowed display names
+            var allowed = new[] { "None", "Hysteresis", "Lowpass", "Lowpass2", "Resist Switch", "Predictive PEC", "ZFilter" };
+            if (!(algorithm == "None" || algorithm == "Hysteresis" || algorithm == "Lowpass" || algorithm == "Lowpass2" || algorithm == "Resist Switch" || algorithm == "Predictive PEC" || algorithm.StartsWith("ZFilter")))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "algorithm must be one of: None, Hysteresis, Lowpass, Lowpass2, Resist Switch, Predictive PEC, ZFilter*",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetGuideAlgorithmDECAsync(algorithm);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { GuideAlgorithmDEC = algorithm },
+                StatusCode = 200,
+                Type = "PHD2GuideAlgorithmDEC"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+
+    /// <summary>
+    /// GET /api/phd2/camera/saturation-by-adu - Get saturation by ADU
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/saturation-by-adu")]
+    public async Task<ApiResponse> GetSaturationByADU()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var byADU = await phd2Service.GetSaturationByADUAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SaturationByADU = byADU },
+                StatusCode = 200,
+                Type = "PHD2SaturationByADU"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/saturation-by-adu - Set saturation by ADU
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/saturation-by-adu")]
+    public async Task<ApiResponse> SetSaturationByADU()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("by_adu"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "by_adu parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!bool.TryParse(requestData["by_adu"].ToString(), out bool byADU))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "by_adu must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            int? aduValue = null;
+            if (byADU && requestData.ContainsKey("adu_value"))
+            {
+                if (!int.TryParse(requestData["adu_value"].ToString(), out int adu))
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new ApiResponse
+                    {
+                        Success = false,
+                        Error = "adu_value must be a valid integer",
+                        StatusCode = 400,
+                        Type = "Error"
+                    };
+                }
+                aduValue = adu;
+            }
+            await phd2Service.SetSaturationByADUAsync(byADU, aduValue);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SaturationByADU = byADU, ADUValue = aduValue },
+                StatusCode = 200,
+                Type = "PHD2SaturationByADU"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/saturation-adu-value - Get saturation ADU value
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/saturation-adu-value")]
+    public async Task<ApiResponse> GetSaturationADUValue()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var aduValue = await phd2Service.GetSaturationADUValueAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SaturationADUValue = aduValue },
+                StatusCode = 200,
+                Type = "PHD2SaturationADUValue"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/saturation-adu-value - Set saturation ADU value
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/saturation-adu-value")]
+    public async Task<ApiResponse> SetSaturationADUValue()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("adu_value"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "adu_value parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!int.TryParse(requestData["adu_value"].ToString(), out int aduValue))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "adu_value must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetSaturationADUValueAsync(aduValue);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { SaturationADUValue = aduValue },
+                StatusCode = 200,
+                Type = "PHD2SaturationADUValue"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/guide/dither-mode - Get dither mode
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/guide/dither-mode")]
+    public async Task<ApiResponse> GetDitherMode()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var mode = await phd2Service.GetDitherModeAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherMode = mode },
+                StatusCode = 200,
+                Type = "PHD2DitherMode"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/guide/dither-mode - Set dither mode
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/guide/dither-mode")]
+    public async Task<ApiResponse> SetDitherMode()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("mode"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "mode parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            var mode = requestData["mode"].ToString();
+            if (mode != "random" && mode != "spiral")
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "mode must be 'random' or 'spiral'",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetDitherModeAsync(mode);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherMode = mode },
+                StatusCode = 200,
+                Type = "PHD2DitherMode"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/dither-ra-only - Get dither RA only
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/guide/dither-ra-only")]
+    public async Task<ApiResponse> GetDitherRaOnly()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var raOnly = await phd2Service.GetDitherRaOnlyAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherRaOnly = raOnly },
+                StatusCode = 200,
+                Type = "PHD2DitherRaOnly"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/guide/dither-ra-only - Set dither RA only
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/guide/dither-ra-only")]
+    public async Task<ApiResponse> SetDitherRaOnly()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("ra_only"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "ra_only parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!bool.TryParse(requestData["ra_only"].ToString(), out bool raOnly))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "ra_only must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetDitherRaOnlyAsync(raOnly);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherRaOnly = raOnly },
+                StatusCode = 200,
+                Type = "PHD2DitherRaOnly"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/dither-scale - Get dither scale
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/guide/dither-scale")]
+    public async Task<ApiResponse> GetDitherScale()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var scale = await phd2Service.GetDitherScaleAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherScale = scale },
+                StatusCode = 200,
+                Type = "PHD2DitherScale"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/dither-scale - Set dither scale
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/guide/dither-scale")]
+    public async Task<ApiResponse> SetDitherScale()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("scale"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "scale parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!double.TryParse(requestData["scale"].ToString(), out double scale))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "scale must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetDitherScaleAsync(scale);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { DitherScale = scale },
+                StatusCode = 200,
+                Type = "PHD2DitherScale"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+    /// <summary>
+    /// GET /api/phd2/auto/exposure-min - Get auto exposure min
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/auto/exposure-min")]
+    public async Task<ApiResponse> GetAutoExposureMin()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var min = await phd2Service.GetAutoExposureMinAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureMin = min },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureMin"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/auto/exposure-min - Set auto exposure min
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/auto/exposure-min")]
+    public async Task<ApiResponse> SetAutoExposureMin()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("exposure"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "exposure parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!double.TryParse(requestData["exposure"].ToString(), out double min))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "exposure must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetAutoExposureMinAsync(min);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureMin = min },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureMin"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/auto-exposure-max - Get auto exposure max
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/auto/exposure-max")]
+    public async Task<ApiResponse> GetAutoExposureMax()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var max = await phd2Service.GetAutoExposureMaxAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureMax = max },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureMax"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/auto-exposure-max - Set auto exposure max
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/auto/exposure-max")]
+    public async Task<ApiResponse> SetAutoExposureMax()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("exposure"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "exposure parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!double.TryParse(requestData["exposure"].ToString(), out double max))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "exposure must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetAutoExposureMaxAsync(max);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureMax = max },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureMax"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/auto/target-snr - Get auto exposure target SNR
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/auto/target-snr")]
+    public async Task<ApiResponse> GetAutoExposureTargetSNR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var snr = await phd2Service.GetAutoExposureTargetSNRAsync();
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureTargetSNR = snr },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureTargetSNR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/auto/target-snr - Set auto exposure target SNR
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/auto/target-snr")]
+    public async Task<ApiResponse> SetAutoExposureTargetSNR()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("target_snr"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "target_snr parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            if (!double.TryParse(requestData["target_snr"].ToString(), out double snr))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "target_snr must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+            await phd2Service.SetAutoExposureTargetSNRAsync(snr);
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { AutoExposureTargetSNR = snr },
+                StatusCode = 200,
+                Type = "PHD2AutoExposureTargetSNR"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/gain - Get camera gain
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/gain")]
+    public async Task<ApiResponse> GetCameraGain()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var gain = await phd2Service.GetCameraGainAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraGain = gain },
+                StatusCode = 200,
+                Type = "PHD2CameraGain"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/gain - Set camera gain
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/gain")]
+    public async Task<ApiResponse> SetCameraGain()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("gain"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "gain parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["gain"].ToString(), out int gain))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "gain must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCameraGainAsync(gain);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraGain = gain },
+                StatusCode = 200,
+                Type = "PHD2CameraGain"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/cooler-on - Get camera cooler status
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/cooler-on")]
+    public async Task<ApiResponse> GetCameraCoolerOn()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var coolerOn = await phd2Service.GetCameraCoolerOnAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraCoolerOn = coolerOn },
+                StatusCode = 200,
+                Type = "PHD2CameraCoolerOn"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/cooler-on - Set camera cooler status
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/cooler-on")]
+    public async Task<ApiResponse> SetCameraCoolerOn()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCameraCoolerOnAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraCoolerOn = enabled },
+                StatusCode = 200,
+                Type = "PHD2CameraCoolerOn"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/temperature-setpoint - Get camera temperature setpoint
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/temperature-setpoint")]
+    public async Task<ApiResponse> GetCameraTemperatureSetpoint()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var temperature = await phd2Service.GetCameraTemperatureSetpointAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraTemperatureSetpoint = temperature },
+                StatusCode = 200,
+                Type = "PHD2CameraTemperatureSetpoint"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/temperature-setpoint - Set camera temperature setpoint
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/temperature-setpoint")]
+    public async Task<ApiResponse> SetCameraTemperatureSetpoint()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("temperature"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "temperature parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!double.TryParse(requestData["temperature"].ToString(), out double temperature))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "temperature must be a valid number",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCameraTemperatureSetpointAsync(temperature);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraTemperatureSetpoint = temperature },
+                StatusCode = 200,
+                Type = "PHD2CameraTemperatureSetpoint"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/use-subframes - Get camera use subframes setting
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/use-subframes")]
+    public async Task<ApiResponse> GetCameraUseSubframes()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var useSubframes = await phd2Service.GetCameraUseSubframesAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraUseSubframes = useSubframes },
+                StatusCode = 200,
+                Type = "PHD2CameraUseSubframes"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/use-subframes - Set camera use subframes setting
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/use-subframes")]
+    public async Task<ApiResponse> SetCameraUseSubframes()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("enabled"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!bool.TryParse(requestData["enabled"].ToString(), out bool enabled))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "enabled must be a valid boolean",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCameraUseSubframesAsync(enabled);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraUseSubframes = enabled },
+                StatusCode = 200,
+                Type = "PHD2CameraUseSubframes"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /api/phd2/camera/binning - Get camera binning setting
+    /// </summary>
+    [Route(HttpVerbs.Get, "/phd2/camera/binning")]
+    public async Task<ApiResponse> GetCameraBinning()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var binning = await phd2Service.GetCameraBinningAsync();
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraBinning = binning },
+                StatusCode = 200,
+                Type = "PHD2CameraBinning"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
+        }
+    }
+
+    /// <summary>
+    /// PUT /api/phd2/camera/binning - Set camera binning setting
+    /// </summary>
+    [Route(HttpVerbs.Put, "/phd2/camera/binning")]
+    public async Task<ApiResponse> SetCameraBinning()
+    {
+        try
+        {
+            EnsurePHD2ServicesInitialized();
+            var requestData = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (requestData == null || !requestData.ContainsKey("binning"))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "binning parameter is required",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            if (!int.TryParse(requestData["binning"].ToString(), out int binning))
+            {
+                HttpContext.Response.StatusCode = 400;
+                return new ApiResponse
+                {
+                    Success = false,
+                    Error = "binning must be a valid integer",
+                    StatusCode = 400,
+                    Type = "Error"
+                };
+            }
+
+            await phd2Service.SetCameraBinningAsync(binning);
+
+            return new ApiResponse
+            {
+                Success = true,
+                Response = new { CameraBinning = binning },
+                StatusCode = 200,
+                Type = "PHD2CameraBinning"
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex);
+            HttpContext.Response.StatusCode = 500;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                StatusCode = 500,
+                Type = "Error"
+            };
         }
     }
 }

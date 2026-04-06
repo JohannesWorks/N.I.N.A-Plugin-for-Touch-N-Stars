@@ -20,7 +20,7 @@ namespace TouchNStars.Server {
         private CancellationTokenSource apiToken;
         public WebServer WebServer;
 
-        private readonly List<string> appEndPoints = ["equipment", "camera", "autofocus", "mount", "guider", "sequence", "settings", "seq-mon", "flat", "dome", "logs", "switch", "flats", "stellarium", "settings", "rotator", "filterwheel", "bahtinov", "plugin1", "plugin2", "plugin3", "plugin4", "plugin5", "plugin6", "plugin7", "plugin8", "plugin9"];
+        private readonly List<string> appEndPoints = ["equipment", "camera", "autofocus", "mount", "guider", "sequence", "settings", "seq-mon", "flat", "dome", "logs", "switch", "flats", "stellarium", "settings", "rotator", "filterwheel", "bahtinov", "plugin1", "plugin2", "plugin3", "plugin4", "plugin5", "plugin6", "plugin7", "plugin8", "plugin9", "plugin10", "plugin11", "plugin12", "plugin13", "plugin14", "plugin15", "plugin16", "plugin17", "plugin18", "plugin19", "plugin20", "plugin21", "plugin22", "plugin23", "plugin24", "plugin25", "plugin26", "plugin27", "plugin28", "plugin29", "plugin30", "plugin31", "plugin32", "plugin33", "plugin34", "plugin35", "plugin36", "plugin37", "plugin38", "plugin39", "plugin40", "plugin41", "plugin42", "plugin43", "plugin44", "plugin45", "plugin46", "plugin47", "plugin48", "plugin49", "plugin50", "plugin51", "plugin52", "plugin53", "plugin54", "plugin55", "plugin56", "plugin57", "plugin58", "plugin59"];
 
         private int port;
         public TouchNStarsServer(int port) => this.port = port;
@@ -28,6 +28,9 @@ namespace TouchNStars.Server {
         public void CreateServer() {
             string assemblyFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             string webAppDir = Path.Combine(assemblyFolder, "app");
+
+            // Suppress EmbedIO verbose logging by unregistering the logger
+            Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>();
 
             WebServer = new WebServer(o => o
                 .WithUrlPrefix($"http://*:{port}")
@@ -50,7 +53,9 @@ namespace TouchNStars.Server {
                 .WithController<FramingController>()     // Framing Assistant control
                 .WithController<MetricsController>()     // System metrics
                 .WithController<UtilityController>()    // Logs, version, api-port
-                .WithController<BahtinovController>());  // Bahtinov mask analysis
+                .WithController<BahtinovController>()    // Bahtinov mask analysis
+                .WithController<INDIController>()        // INDI driver management
+                .WithController<ProxyController>());     // Generic proxy for external URLs
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 
