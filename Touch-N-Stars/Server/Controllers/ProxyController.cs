@@ -32,22 +32,33 @@ public class ProxyController : WebApiController
 
         try
         {
-            Uri uri = new Uri(targetUrl);
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
+            // Decode the URL in case it was percent-encoded by the browser
+            string decodedUrl = Uri.UnescapeDataString(targetUrl);
+            Uri uri = new Uri(decodedUrl);
 
-            // Extract credentials from URL and send as Basic Auth header
+            // Extract credentials and build clean URI
+            Uri requestUri = uri;
+            System.Net.ICredentials credentials = null;
+
             if (!string.IsNullOrEmpty(uri.UserInfo))
             {
-                string credentials = Convert.ToBase64String(
-                    Encoding.UTF8.GetBytes(Uri.UnescapeDataString(uri.UserInfo)));
-                request.Headers.Add("Authorization", $"Basic {credentials}");
+                string userInfo = Uri.UnescapeDataString(uri.UserInfo);
+                int colonIndex = userInfo.IndexOf(':');
+                string username = colonIndex >= 0 ? userInfo.Substring(0, colonIndex) : userInfo;
+                string password = colonIndex >= 0 ? userInfo.Substring(colonIndex + 1) : string.Empty;
 
-                // Rebuild URI without credentials
+                // Use NetworkCredential so HttpClient handles both Basic and Digest auth automatically
+                credentials = new System.Net.NetworkCredential(username, password);
+
                 UriBuilder builder = new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty };
-                request.RequestUri = builder.Uri;
+                requestUri = builder.Uri;
             }
 
-            HttpResponseMessage response = await client.SendAsync(request);
+            // Create a per-request HttpClient with credentials
+            var handler = new HttpClientHandler { Credentials = credentials, PreAuthenticate = false };
+            using var httpClient = new HttpClient(handler);
+
+            HttpResponseMessage response = await httpClient.GetAsync(requestUri);
             HttpContext.Response.StatusCode = (int)response.StatusCode;
 
             if (response.Content != null)
