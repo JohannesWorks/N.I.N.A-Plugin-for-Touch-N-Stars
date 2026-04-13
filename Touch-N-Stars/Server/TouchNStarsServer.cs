@@ -30,7 +30,7 @@ namespace TouchNStars.Server {
             string webAppDir = Path.Combine(assemblyFolder, "app");
 
             // Suppress EmbedIO verbose logging by unregistering the logger
-            Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>();
+            try { Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>(); } catch { }
 
             WebServer = new WebServer(o => o
                 .WithUrlPrefix($"http://*:{port}")
