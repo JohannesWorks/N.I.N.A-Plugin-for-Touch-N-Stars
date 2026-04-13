@@ -23,8 +23,11 @@ namespace TouchNStars.Server.Controllers;
 
 /// <summary>
 /// Controller for FITS file analysis and plate solving.
+/// Replicates NINA's Framing Assistant file plate solve flow as REST API.
+///
 /// Routes:
-///   GET /api/fits/analyze?path=... — read WCS headers or trigger plate solve
+///   GET  /api/fits/parameters?path=... — Step 1: read FITS headers, return params for frontend form
+///   POST /api/fits/analyze            — Step 2: plate solve with confirmed parameters
 /// </summary>
 internal class FitsAnalysisController : WebApiController
 {
@@ -36,38 +39,153 @@ internal class FitsAnalysisController : WebApiController
     }
 
     // -------------------------------------------------------------------------
-    // GET /api/fits/analyze?path=...
+    // GET /api/fits/parameters?path=...
+    // Step 1: Liest FITS-Header aus und gibt Parameter zurück.
+    // Das Frontend zeigt diese dem User zur Kontrolle an (wie NINAs Dialog).
+    // Wenn hasWcs=true sind Koordinaten bereits gelöst, kein Solve nötig.
     // -------------------------------------------------------------------------
-    [Route(HttpVerbs.Get, "/fits/analyze")]
-    public async Task Analyze()
+    [Route(HttpVerbs.Get, "/fits/parameters")]
+    public async Task GetParameters()
     {
         try
         {
-            // --- 1. Pfad validieren ---
             string pathParam = HttpContext.Request.QueryString["path"];
             if (string.IsNullOrWhiteSpace(pathParam))
             {
-                await SendJson(new FitsSolveResult { Success = false, Error = "Missing 'path' query parameter" }, 400);
+                await SendJson(new FitsParameters { Success = false, Error = "Missing 'path' query parameter" }, 400);
                 return;
             }
 
             string fullPath = Path.GetFullPath(Uri.UnescapeDataString(pathParam));
-
             if (!File.Exists(fullPath))
             {
-                await SendJson(new FitsSolveResult { Success = false, Error = "File does not exist" }, 404);
+                await SendJson(new FitsParameters { Success = false, Error = "File does not exist" }, 404);
                 return;
             }
 
             string ext = Path.GetExtension(fullPath).ToLowerInvariant();
             if (ext != ".fits" && ext != ".fit" && ext != ".fts" && ext != ".fz")
             {
-                await SendJson(new FitsSolveResult { Success = false, Error = "File must be a FITS file (.fits, .fit, .fts, .fz)" }, 400);
+                await SendJson(new FitsParameters { Success = false, Error = "File must be a FITS file (.fits, .fit, .fts, .fz)" }, 400);
                 return;
             }
 
-            // --- 2. FITS laden (NINA parst dabei automatisch alle Header) ---
-            Logger.Info($"[FitsAnalysisController] Loading FITS file: {fullPath}");
+            Logger.Info($"[FitsAnalysisController] Reading FITS parameters: {fullPath}");
+            var imageData = await TouchNStars.Mediators.ImageDataFactory
+                .CreateFromFile(fullPath, 16, false, RawConverterEnum.FREEIMAGE);
+
+            if (imageData == null)
+            {
+                await SendJson(new FitsParameters { Success = false, Error = "Failed to load FITS file" }, 500);
+                return;
+            }
+
+            var profile = TouchNStars.Mediators.Profile.ActiveProfile;
+            var meta = imageData.MetaData;
+
+            // FocalLength: FITS-Header (FOCALLEN) → Profil-Fallback (exakt wie FramingAssistantVM)
+            double focalLength = !double.IsNaN(meta.Telescope.FocalLength) && meta.Telescope.FocalLength > 0
+                ? meta.Telescope.FocalLength
+                : profile.TelescopeSettings.FocalLength;
+
+            // PixelSize: FITS-Header (XPIXSZ / BinX) → Profil-Fallback
+            double pixelSize = !double.IsNaN(meta.Camera.PixelSize) && meta.Camera.PixelSize > 0
+                ? meta.Camera.PixelSize
+                : profile.CameraSettings.PixelSize;
+
+            int binning = meta.Camera.BinX > 0 ? meta.Camera.BinX : 1;
+
+            // WCS prüfen (bereits gelöst)
+            bool hasWcs = meta.WorldCoordinateSystem?.Coordinates != null;
+
+            // Koordinaten-Hint (Teleskop-Pointing oder Target)
+            Coordinates coords = meta.Telescope.Coordinates
+                                 ?? meta.Target.Coordinates
+                                 ?? ExtractCoordinatesFromGenericHeaders(meta.GenericHeaders);
+
+            var result = new FitsParameters
+            {
+                Success = true,
+                HasWcs = hasWcs,
+                FocalLength = focalLength,
+                PixelSize = pixelSize,
+                Binning = binning,
+                HasCoordinates = coords != null
+            };
+
+            if (hasWcs)
+            {
+                var wcsCoords = meta.WorldCoordinateSystem.Coordinates;
+                result.Ra = wcsCoords.RADegrees;
+                result.Dec = wcsCoords.Dec;
+                result.RaString = wcsCoords.RAString;
+                result.DecString = wcsCoords.DecString;
+            }
+            else if (coords != null)
+            {
+                result.Ra = coords.RADegrees;
+                result.Dec = coords.Dec;
+                result.RaString = coords.RAString;
+                result.DecString = coords.DecString;
+            }
+
+            await SendJson(result);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[FitsAnalysisController.GetParameters] {ex.Message}", ex);
+            await SendJson(new FitsParameters { Success = false, Error = ex.Message }, 500);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/fits/analyze
+    // Step 2: Plate Solve mit vom User bestätigten Parametern.
+    // Body: { path, focalLength, pixelSize, binning, ra?, dec?, blindSolve }
+    // Wenn hasWcs=true war, gibt der Endpoint sofort die WCS-Koordinaten zurück.
+    // -------------------------------------------------------------------------
+    [Route(HttpVerbs.Post, "/fits/analyze")]
+    public async Task Analyze()
+    {
+        try
+        {
+            var body = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
+            if (body == null)
+            {
+                await SendJson(new FitsSolveResult { Success = false, Error = "Missing request body" }, 400);
+                return;
+            }
+
+            if (!body.TryGetValue("path", out var pathObj) || string.IsNullOrWhiteSpace(pathObj?.ToString()))
+            {
+                await SendJson(new FitsSolveResult { Success = false, Error = "Missing 'path' in request body" }, 400);
+                return;
+            }
+
+            string fullPath = Path.GetFullPath(pathObj.ToString());
+            if (!File.Exists(fullPath))
+            {
+                await SendJson(new FitsSolveResult { Success = false, Error = "File does not exist" }, 404);
+                return;
+            }
+
+            // Parameter aus Body lesen (vom Frontend ggf. korrigiert)
+            double focalLength = ParseBodyDouble(body, "focalLength");
+            double pixelSize   = ParseBodyDouble(body, "pixelSize");
+            int    binning     = ParseBodyInt(body, "binning", defaultVal: 1);
+            bool   blindSolve  = ParseBodyBool(body, "blindSolve");
+
+            // Optional: Koordinaten-Hint
+            double? ra  = ParseBodyNullableDouble(body, "ra");
+            double? dec = ParseBodyNullableDouble(body, "dec");
+
+            if (focalLength <= 0)
+            {
+                await SendJson(new FitsSolveResult { Success = false, Error = "focalLength must be > 0" }, 400);
+                return;
+            }
+
+            Logger.Info($"[FitsAnalysisController] Loading FITS for plate solve: {fullPath}");
             var imageData = await TouchNStars.Mediators.ImageDataFactory
                 .CreateFromFile(fullPath, 16, false, RawConverterEnum.FREEIMAGE);
 
@@ -77,19 +195,19 @@ internal class FitsAnalysisController : WebApiController
                 return;
             }
 
-            // --- 3. WCS-Header prüfen (schneller Pfad — bereits gelöstes Bild) ---
+            // WCS bereits vorhanden? → direkt zurückgeben (kein Solve nötig)
             var wcs = imageData.MetaData.WorldCoordinateSystem;
             if (wcs?.Coordinates != null)
             {
                 Logger.Info($"[FitsAnalysisController] WCS headers found, returning directly");
-                var coords = wcs.Coordinates;
+                var wcsCoords = wcs.Coordinates;
                 await SendJson(new FitsSolveResult
                 {
                     Success = true,
-                    Ra = coords.RADegrees,
-                    Dec = coords.Dec,
-                    RaString = coords.RAString,
-                    DecString = coords.DecString,
+                    Ra = wcsCoords.RADegrees,
+                    Dec = wcsCoords.Dec,
+                    RaString = wcsCoords.RAString,
+                    DecString = wcsCoords.DecString,
                     Rotation = wcs.Rotation,
                     PixelScale = wcs.PixelScaleX,
                     SolvedFromWcs = true
@@ -97,91 +215,56 @@ internal class FitsAnalysisController : WebApiController
                 return;
             }
 
-            // --- 4. Kein WCS → Plate Solve ---
-            Logger.Info($"[FitsAnalysisController] No WCS headers found, starting plate solve");
-
-            // Koordinaten-Hint: NINA parst RA/DEC und OBJCTRA/OBJCTDEC automatisch beim Laden
-            Coordinates hint = imageData.MetaData.Telescope.Coordinates
-                               ?? imageData.MetaData.Target.Coordinates
-                               ?? ExtractCoordinatesFromGenericHeaders(imageData.MetaData.GenericHeaders);
-
-            if (hint != null)
-                Logger.Info($"[FitsAnalysisController] Using coordinate hint: RA={hint.RADegrees:F4} Dec={hint.Dec:F4}");
+            // Koordinaten-Hint bauen (null = Blind Solve)
+            Coordinates hint = null;
+            if (!blindSolve && ra.HasValue && dec.HasValue)
+            {
+                hint = new Coordinates(Angle.ByDegree(ra.Value), Angle.ByDegree(dec.Value), Epoch.J2000);
+                Logger.Info($"[FitsAnalysisController] Coordinate hint: RA={ra.Value:F4} Dec={dec.Value:F4}");
+            }
             else
-                Logger.Info($"[FitsAnalysisController] No coordinate hint found — using blind solve");
+            {
+                Logger.Info($"[FitsAnalysisController] Blind solve requested");
+            }
 
-            // FocalLength: erst aus Profil, Fallback aus FITS-Header (FOCALLEN)
             var profile = TouchNStars.Mediators.Profile.ActiveProfile;
-            double focalLength = profile.TelescopeSettings.FocalLength;
-            double pixelSize = profile.CameraSettings.PixelSize;
-
-            if (focalLength <= 0 || double.IsNaN(focalLength))
-            {
-                double fitsFL = imageData.MetaData.Telescope.FocalLength;
-                if (fitsFL > 0 && !double.IsNaN(fitsFL))
-                {
-                    focalLength = fitsFL;
-                    Logger.Info($"[FitsAnalysisController] FocalLength from FITS header: {focalLength} mm");
-                }
-                else
-                {
-                    await SendJson(new FitsSolveResult
-                    {
-                        Success = false,
-                        Error = "FocalLength not set in NINA profile and not found in FITS header (FOCALLEN). Please configure it in NINA settings."
-                    }, 422);
-                    return;
-                }
-            }
-
-            // PixelSize: erst aus Profil, Fallback aus FITS-Header (XPIXSZ)
-            if (pixelSize <= 0 || double.IsNaN(pixelSize))
-            {
-                double fitsPS = GetDoubleFromGenericHeaders(imageData.MetaData.GenericHeaders, "XPIXSZ");
-                if (fitsPS > 0)
-                {
-                    pixelSize = fitsPS;
-                    Logger.Info($"[FitsAnalysisController] PixelSize from FITS header: {pixelSize} µm");
-                }
-            }
-
             var solveSettings = profile.PlateSolveSettings;
 
             var parameter = new PlateSolveParameter
             {
-                FocalLength = focalLength,
-                PixelSize = pixelSize,
-                Binning = 1,
-                Coordinates = hint,
-                SearchRadius = solveSettings.SearchRadius,
+                FocalLength      = focalLength,
+                PixelSize        = pixelSize,
+                Binning          = binning,
+                Coordinates      = hint,
+                SearchRadius     = solveSettings.SearchRadius,
                 DownSampleFactor = solveSettings.DownSampleFactor,
-                MaxObjects = solveSettings.MaxObjects,
-                Regions = solveSettings.Regions,
-                BlindFailoverEnabled = solveSettings.BlindFailoverEnabled
+                MaxObjects       = solveSettings.MaxObjects,
+                Regions          = solveSettings.Regions,
+                BlindFailoverEnabled = hint != null && solveSettings.BlindFailoverEnabled
             };
 
-            // --- 5. Solver ausführen — genau wie NINA intern (statische Factory) ---
+            // Genau wie NINA intern: statische Factory + new ImageSolver (wie FramingAssistantVM)
             var plateSolver = PlateSolverFactory.GetPlateSolver(solveSettings);
             var blindSolver = PlateSolverFactory.GetBlindSolver(solveSettings);
             var imageSolver = new ImageSolver(plateSolver, blindSolver);
 
+            Logger.Info($"[FitsAnalysisController] Starting plate solve (FL={focalLength}mm, PS={pixelSize}µm, Bin={binning})");
             var progress = new Progress<ApplicationStatus>();
             var result = await imageSolver.Solve(imageData, parameter, progress, CancellationToken.None);
 
-            // --- 6. Ergebnis zurückgeben ---
             if (result.Success)
             {
-                Logger.Info($"[FitsAnalysisController] Plate solve successful: RA={result.Coordinates.RADegrees:F4} Dec={result.Coordinates.Dec:F4} PA={result.PositionAngle:F2}");
-                var coords = result.Coordinates;
+                Logger.Info($"[FitsAnalysisController] Solve successful: RA={result.Coordinates.RADegrees:F4} Dec={result.Coordinates.Dec:F4} PA={result.PositionAngle:F2}");
+                var solvedCoords = result.Coordinates;
                 await SendJson(new FitsSolveResult
                 {
-                    Success = true,
-                    Ra = coords.RADegrees,
-                    Dec = coords.Dec,
-                    RaString = coords.RAString,
-                    DecString = coords.DecString,
-                    Rotation = result.PositionAngle,
-                    PixelScale = result.Pixscale,
+                    Success      = true,
+                    Ra           = solvedCoords.RADegrees,
+                    Dec          = solvedCoords.Dec,
+                    RaString     = solvedCoords.RAString,
+                    DecString    = solvedCoords.DecString,
+                    Rotation     = result.PositionAngle,
+                    PixelScale   = result.Pixscale,
                     SolvedFromWcs = false
                 });
             }
@@ -202,43 +285,35 @@ internal class FitsAnalysisController : WebApiController
         }
     }
 
-    /// <summary>
-    /// Liest Koordinaten aus rohen FITS-Headern als letzter Fallback.
-    /// NINA parst RA/DEC und OBJCTRA/OBJCTDEC bereits beim Laden in MetaData —
-    /// diese Methode greift nur auf GenericHeaders zurück falls MetaData leer ist.
-    /// </summary>
+    // -------------------------------------------------------------------------
+    // Hilfsmethoden
+    // -------------------------------------------------------------------------
+
     private static Coordinates ExtractCoordinatesFromGenericHeaders(List<IGenericMetaDataHeader> headers)
     {
-        if (headers == null || headers.Count == 0)
-            return null;
+        if (headers == null || headers.Count == 0) return null;
+        var dict = headers.ToDictionary(h => h.Key, h => h, StringComparer.OrdinalIgnoreCase);
 
-        var headerDict = headers.ToDictionary(h => h.Key, h => h, StringComparer.OrdinalIgnoreCase);
-
-        // Variante 1: RA + DEC als Dezimalgrad (NINA-Standard beim Capture)
-        if (headerDict.TryGetValue("RA", out var raHeader) &&
-            headerDict.TryGetValue("DEC", out var decHeader))
+        // RA + DEC (Dezimalgrad)
+        if (dict.TryGetValue("RA", out var raH) && dict.TryGetValue("DEC", out var decH) &&
+            TryGetDouble(raH, out double ra) && TryGetDouble(decH, out double dec))
         {
-            if (TryGetDouble(raHeader, out double ra) && TryGetDouble(decHeader, out double dec))
-            {
-                Logger.Debug($"[FitsAnalysisController] Hint from RA/DEC headers: {ra:F4} / {dec:F4}");
-                return new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000);
-            }
+            Logger.Debug($"[FitsAnalysisController] Coordinate hint from RA/DEC: {ra:F4}/{dec:F4}");
+            return new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000);
         }
 
-        // Variante 2: OBJCTRA + OBJCTDEC als HMS/DMS String (NINA-Standard für Target)
-        if (headerDict.TryGetValue("OBJCTRA", out var objRaHeader) &&
-            headerDict.TryGetValue("OBJCTDEC", out var objDecHeader))
+        // OBJCTRA + OBJCTDEC (HMS/DMS String)
+        if (dict.TryGetValue("OBJCTRA", out var objRaH) && dict.TryGetValue("OBJCTDEC", out var objDecH))
         {
-            string raStr = GetStringValue(objRaHeader)?.Trim();
-            string decStr = GetStringValue(objDecHeader)?.Trim();
+            string raStr  = GetStringValue(objRaH)?.Trim();
+            string decStr = GetStringValue(objDecH)?.Trim();
             if (!string.IsNullOrWhiteSpace(raStr) && !string.IsNullOrWhiteSpace(decStr))
             {
                 try
                 {
-                    // NINA schreibt "HH MM SS.s" → zu "HH:MM:SS" konvertieren
-                    double raDeg = CoreUtility.HmsToDegrees(raStr.Replace(' ', ':'));
+                    double raDeg  = CoreUtility.HmsToDegrees(raStr.Replace(' ', ':'));
                     double decDeg = CoreUtility.DmsToDegrees(decStr.Replace(' ', ':'));
-                    Logger.Debug($"[FitsAnalysisController] Hint from OBJCTRA/OBJCTDEC: {raDeg:F4} / {decDeg:F4}");
+                    Logger.Debug($"[FitsAnalysisController] Coordinate hint from OBJCTRA/OBJCTDEC: {raDeg:F4}/{decDeg:F4}");
                     return new Coordinates(Angle.ByDegree(raDeg), Angle.ByDegree(decDeg), Epoch.J2000);
                 }
                 catch (Exception ex)
@@ -249,14 +324,6 @@ internal class FitsAnalysisController : WebApiController
         }
 
         return null;
-    }
-
-    private static double GetDoubleFromGenericHeaders(List<IGenericMetaDataHeader> headers, string key)
-    {
-        if (headers == null) return 0;
-        var header = headers.FirstOrDefault(h => string.Equals(h.Key, key, StringComparison.OrdinalIgnoreCase));
-        if (header != null && TryGetDouble(header, out double val)) return val;
-        return 0;
     }
 
     private static bool TryGetDouble(IGenericMetaDataHeader header, out double value)
@@ -273,5 +340,39 @@ internal class FitsAnalysisController : WebApiController
         if (header is IGenericMetaDataHeader<string> sh) return sh.Value;
         if (header is IGenericMetaDataHeader<double> dh) return dh.Value.ToString(CultureInfo.InvariantCulture);
         return null;
+    }
+
+    private static double ParseBodyDouble(Dictionary<string, object> body, string key, double defaultVal = 0)
+    {
+        if (body.TryGetValue(key, out var val) && val != null &&
+            double.TryParse(val.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
+            return result;
+        return defaultVal;
+    }
+
+    private static double? ParseBodyNullableDouble(Dictionary<string, object> body, string key)
+    {
+        if (body.TryGetValue(key, out var val) && val != null &&
+            double.TryParse(val.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
+            return result;
+        return null;
+    }
+
+    private static int ParseBodyInt(Dictionary<string, object> body, string key, int defaultVal = 0)
+    {
+        if (body.TryGetValue(key, out var val) && val != null &&
+            int.TryParse(val.ToString(), out int result))
+            return result;
+        return defaultVal;
+    }
+
+    private static bool ParseBodyBool(Dictionary<string, object> body, string key)
+    {
+        if (body.TryGetValue(key, out var val) && val != null)
+        {
+            if (val is bool b) return b;
+            if (bool.TryParse(val.ToString(), out bool result)) return result;
+        }
+        return false;
     }
 }
