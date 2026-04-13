@@ -30,7 +30,7 @@ namespace TouchNStars.Server {
             string webAppDir = Path.Combine(assemblyFolder, "app");
 
             // Suppress EmbedIO verbose logging by unregistering the logger
-            Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>();
+            try { Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>(); } catch { }
 
             WebServer = new WebServer(o => o
                 .WithUrlPrefix($"http://*:{port}")
@@ -55,7 +55,8 @@ namespace TouchNStars.Server {
                 .WithController<UtilityController>()    // Logs, version, api-port
                 .WithController<BahtinovController>()    // Bahtinov mask analysis
                 .WithController<INDIController>()        // INDI driver management
-                .WithController<ProxyController>());     // Generic proxy for external URLs
+                .WithController<ProxyController>()       // Generic proxy for external URLs
+                .WithController<FilesystemController>());
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 
