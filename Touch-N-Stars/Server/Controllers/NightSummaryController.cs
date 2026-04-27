@@ -150,6 +150,14 @@ public class NightSummaryController : WebApiController
                     ? ((IList)(getTimingEvents.Invoke(db, new object[] { sessionId }) ?? new object[0])).Cast<object>().Select(MapToDict).ToList()
                     : new List<Dictionary<string, object>>();
 
+                // If the DB has no cached timing events, attempt a live log re-parse so the
+                // in-app session view can show the overhead analysis even for sessions where
+                // parsing failed (or hadn't run yet) at session-end time.
+                if (!timingEvents.Any())
+                {
+                    timingEvents = TryReparseAndCacheTimingEvents(db, dbType, session, sessionId, images.Count);
+                }
+
                 // Compute summary stats from LIGHT images only
                 var lightImages = images.Where(i => { var t = i.TryGetValue("ImageType", out var v) ? v?.ToString() : null; return string.IsNullOrEmpty(t) || t == "LIGHT"; }).ToList();
                 var acceptedImages = lightImages.Where(i => i.TryGetValue("Accepted", out var v) && v is bool b && b).ToList();
@@ -592,5 +600,58 @@ public class NightSummaryController : WebApiController
                 return (object)new ApiResponse { Success = false, Error = ex.InnerException?.Message ?? ex.Message };
             }
         });
+    }
+
+    /// <summary>
+    /// Attempts to re-parse the NINA log file for the given session and cache the results in the DB.
+    /// Returns the parsed timing events as dictionaries, or an empty list if parsing fails or finds nothing.
+    /// Mirrors the fallback pattern used by SessionService.BuildReportDataAsync and SendFromDatabaseAsync.
+    /// </summary>
+    private static List<Dictionary<string, object>> TryReparseAndCacheTimingEvents(
+        object db, Type dbType, object session, string sessionId, int imageCount)
+    {
+        try
+        {
+            var asm = GetNightSummaryAssembly();
+            var parserType = asm?.GetType("NINA.Plugin.NightSummary.Data.NinaLogParser");
+            if (parserType == null) return new List<Dictionary<string, object>>();
+
+            var parseMethod = parserType.GetMethod("Parse",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(DateTime), typeof(DateTime), typeof(int) },
+                null);
+            if (parseMethod == null) return new List<Dictionary<string, object>>();
+
+            // Read SessionStart / SessionEnd from the raw session record via reflection
+            var sessionType = session.GetType();
+            var startProp = sessionType.GetProperty("SessionStart");
+            var endProp = sessionType.GetProperty("SessionEnd");
+            if (startProp == null || endProp == null) return new List<Dictionary<string, object>>();
+
+            var sessionStart = (DateTime)startProp.GetValue(session);
+            var sessionEnd = (DateTime)endProp.GetValue(session);
+
+            // Skip re-parse for sessions that haven't ended yet or have invalid timestamps
+            if (sessionStart == default || sessionEnd == default || sessionEnd <= sessionStart)
+                return new List<Dictionary<string, object>>();
+
+            var parsed = (IList)parseMethod.Invoke(null, new object[] { sessionStart, sessionEnd, imageCount });
+            if (parsed == null || parsed.Count == 0) return new List<Dictionary<string, object>>();
+
+            // Persist to DB so subsequent calls don't re-parse
+            var clearMethod = dbType.GetMethod("ClearTimingEvents");
+            var saveMethod = dbType.GetMethod("SaveTimingEvents");
+            clearMethod?.Invoke(db, new object[] { sessionId });
+            saveMethod?.Invoke(db, new object[] { sessionId, parsed });
+
+            Logger.Info($"NightSummaryController: Log re-parse for {sessionId} yielded {parsed.Count} timing events");
+            return parsed.Cast<object>().Select(MapToDict).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"NightSummaryController: Log re-parse failed for {sessionId} — {ex.InnerException?.Message ?? ex.Message}");
+            return new List<Dictionary<string, object>>();
+        }
     }
 }
