@@ -28,12 +28,6 @@
     <PackageReference Include="System.Drawing.Common" Version="*" ExcludeAssets="all" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Remove="BahtiFocus\Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="BahtiFocus\Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
     <Compile Update="Properties\Settings.Designer.cs">
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
       <AutoGen>True</AutoGen>
