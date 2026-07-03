@@ -47,9 +47,16 @@ jobs:
           dotnet build ${{ env.PLUGIN_NAME }}.sln -c Release -p:PostBuildEvent= -p:Version=${{ steps.get_version.outputs.version }}
       - name: Prepare package
         run: |
-          Copy-Item "Touch-N-Stars/bin/Release/net8.0-windows/${{ env.PLUGIN_DLL_NAME }}.dll" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.dll" -Force
-          Copy-Item "Touch-N-Stars/bin/Release/net8.0-windows/${{ env.PLUGIN_DLL_NAME }}.pdb" "packages/${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_DLL_NAME }}.pdb" -Force
-          Copy-Item "Touch-N-Stars/extra-libs/*.dll" "packages/${{ env.PLUGIN_NAME }}/" -Force
+          $buildOutput = "Touch-N-Stars/bin/Release/net8.0-windows"
+          $packageRoot = "packages/${{ env.PLUGIN_NAME }}"
+
+          # Include full plugin runtime payload: main DLL, deps/runtimeconfig, runtimes folder and all transitive dependencies.
+          Copy-Item "$buildOutput/*" "$packageRoot/" -Recurse -Force
+
+          # Keep explicit extra-libs copy for any manually managed binaries.
+          if (Test-Path "Touch-N-Stars/extra-libs") {
+            Copy-Item "Touch-N-Stars/extra-libs/*" "$packageRoot/" -Recurse -Force
+          }
   
       - name: Add app folder to package
         run: |

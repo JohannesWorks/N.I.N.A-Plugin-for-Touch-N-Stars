@@ -1,13 +1,14 @@
 ﻿using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 // [MANDATORY] The following GUID is used as a unique identifier of the plugin. Generate a fresh one for your plugin!
 [assembly: Guid("5af0afae-cab5-4fde-9fcd-3302c0d59686")]
 
 // [MANDATORY] The assembly versioning
 //Should be incremented for each new release build of a plugin
-[assembly: AssemblyVersion("1.2.7.3")]
-[assembly: AssemblyFileVersion("1.2.7.3")]
+[assembly: AssemblyVersion("1.2.7.4")]
+[assembly: AssemblyFileVersion("1.2.7.4")]
 
 // [MANDATORY] The name of your plugin
 [assembly: AssemblyTitle("Touch 'N' Stars")]
@@ -98,3 +99,4 @@ Thanks to https://github.com/CanardConfit/BahtiFocus for the Bahtinov mask analy
 [assembly: AssemblyTrademark("")]
 // [Unused]
 [assembly: AssemblyCulture("")]
+[assembly: InternalsVisibleTo("TouchNStars.Tests")]
