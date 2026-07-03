@@ -215,7 +215,13 @@ namespace TouchNStars.PHD2
         private Thread workerThread;
         private volatile bool terminate;
         private readonly object syncObject = new object();
-        private JObject response;
+        // Responses are matched to their originating Call() by request id. PHD2
+        // interleaves RPC responses with a stream of event notifications (heavy
+        // during active guiding), so a single shared "response" field raced: an
+        // answer arriving before the caller reached Monitor.Wait was lost, then
+        // every call timed out. Keyed pending map + PulseAll fixes that.
+        private readonly Dictionary<int, JObject> pendingResponses = new Dictionary<int, JObject>();
+        private int nextRequestId;
 
         private readonly Accumulator accumRA = new Accumulator();
         private readonly Accumulator accumDec = new Accumulator();
@@ -266,11 +272,22 @@ namespace TouchNStars.PHD2
 
             connection?.Close();
             connection = new PHD2Connection();
+
+            // Drop any responses left over from the previous connection and wake
+            // any callers still waiting so they fail fast instead of timing out.
+            lock (syncObject)
+            {
+                pendingResponses.Clear();
+                Monitor.PulseAll(syncObject);
+            }
         }
 
         public JObject Call(string method, JToken param = null)
         {
-            string jsonRpc = MakeJsonRpc(method, param);
+            // Unique id per call so the worker can match this response even when
+            // it arrives interleaved with (or before) other responses/events.
+            int id = System.Threading.Interlocked.Increment(ref nextRequestId);
+            string jsonRpc = MakeJsonRpc(method, id, param);
             Debug.WriteLine($"PHD2 Call: {jsonRpc}");
 
             // Also log to NINA logger for better visibility
@@ -296,21 +313,25 @@ namespace TouchNStars.PHD2
             {
                 var timeout = DateTime.Now.AddSeconds(10); // 10 second timeout
 
-                while (response == null && DateTime.Now < timeout)
+                // The response may already be in the map if the worker read it
+                // between our WriteLine and taking this lock - checking the map
+                // (not a single shared field) means we never miss it.
+                while (!pendingResponses.ContainsKey(id) && DateTime.Now < timeout)
                 {
                     if (!IsConnected)
+                    {
+                        pendingResponses.Remove(id);
                         throw new PHD2Exception("PHD2 Server disconnected during call");
+                    }
 
                     Monitor.Wait(syncObject, 1000); // Wait max 1 second at a time
                 }
 
-                if (response == null)
+                if (!pendingResponses.TryGetValue(id, out JObject result))
                 {
                     throw new PHD2Exception($"Timeout waiting for response to {method} - PHD2 may be disconnected");
                 }
-
-                JObject result = response;
-                response = null;
+                pendingResponses.Remove(id);
 
                 if (IsFailedResponse(result))
                     throw new PHD2Exception((string)result["error"]["message"]);
@@ -344,11 +365,17 @@ namespace TouchNStars.PHD2
 
                         if (json.ContainsKey("jsonrpc"))
                         {
-                            // Response to a call
+                            // Response to a call - store it under its id and wake
+                            // all waiters (PulseAll, since several calls may be
+                            // pending). The waiting Call() matches by its own id.
+                            int? responseId = json["id"]?.Value<int>();
                             lock (syncObject)
                             {
-                                response = json;
-                                Monitor.Pulse(syncObject);
+                                if (responseId.HasValue)
+                                {
+                                    pendingResponses[responseId.Value] = json;
+                                }
+                                Monitor.PulseAll(syncObject);
                             }
                         }
                         else
@@ -1511,12 +1538,12 @@ namespace TouchNStars.PHD2
                 throw new PHD2Exception("PHD2 Server disconnected");
         }
 
-        private static string MakeJsonRpc(string method, JToken param)
+        private static string MakeJsonRpc(string method, int id, JToken param)
         {
             var request = new JObject
             {
                 ["method"] = method,
-                ["id"] = 1
+                ["id"] = id
             };
 
             if (param != null && param.Type != JTokenType.Null)
