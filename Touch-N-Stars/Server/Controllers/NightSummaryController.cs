@@ -79,6 +79,28 @@ public class NightSummaryController : WebApiController
         catch { return fallback; }
     }
 
+    /// <summary>
+    /// Settings fields that must never be exposed in plaintext via the API (credentials/secrets).
+    /// GetSettings replaces them with a "&lt;Field&gt;Set" boolean; UpdateSettings treats them as
+    /// write-only (a blank incoming value keeps the currently stored value).
+    /// </summary>
+    private static readonly HashSet<string> SecretSettingsFields = new(StringComparer.Ordinal)
+    {
+        "SmtpPassword", "DiscordWebhookUrl", "PushoverAppToken", "PushoverUserKey"
+    };
+
+    private static void MaskSecrets(Dictionary<string, object> dict)
+    {
+        foreach (var field in SecretSettingsFields)
+        {
+            if (dict.TryGetValue(field, out var raw))
+            {
+                dict.Remove(field);
+                dict[$"{field}Set"] = !string.IsNullOrEmpty(raw as string);
+            }
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>GET /api/nightsummary/status — returns whether the Night Summary plugin is loaded.</summary>
@@ -336,6 +358,7 @@ public class NightSummaryController : WebApiController
                 return new ApiResponse { Success = false, Error = "Night Summary plugin not loaded" };
 
             var dict = MapToDict(settings);
+            MaskSecrets(dict);
             // Also build filter list from NINA profile
             var filters = GetProfileFilterNames();
             dict["_filterNames"] = filters;
@@ -368,6 +391,15 @@ public class NightSummaryController : WebApiController
 
                 foreach (var prop in doc.RootElement.EnumerateObject())
                 {
+                    // Secret fields are write-only: a blank value means "keep the current value",
+                    // so the client never has to round-trip a plaintext credential.
+                    if (SecretSettingsFields.Contains(prop.Name))
+                    {
+                        var incoming = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : null;
+                        if (string.IsNullOrEmpty(incoming))
+                            continue;
+                    }
+
                     var val = (object)prop.Value;
                     SetProp(settings, prop.Name, val);
                 }
