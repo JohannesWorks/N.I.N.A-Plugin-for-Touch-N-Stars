@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using TouchNStars.Server.Models;
@@ -77,6 +78,28 @@ public class NightSummaryController : WebApiController
             return fallback;
         try { return (T)Convert.ChangeType(raw, typeof(T)); }
         catch { return fallback; }
+    }
+
+    /// <summary>
+    /// Settings fields that must never be exposed in plaintext via the API (credentials/secrets).
+    /// GetSettings replaces them with a "&lt;Field&gt;Set" boolean; UpdateSettings treats them as
+    /// write-only (a blank incoming value keeps the currently stored value).
+    /// </summary>
+    private static readonly HashSet<string> SecretSettingsFields = new(StringComparer.Ordinal)
+    {
+        "SmtpPassword", "DiscordWebhookUrl", "PushoverAppToken", "PushoverUserKey"
+    };
+
+    private static void MaskSecrets(Dictionary<string, object> dict)
+    {
+        foreach (var field in SecretSettingsFields)
+        {
+            if (dict.TryGetValue(field, out var raw))
+            {
+                dict.Remove(field);
+                dict[$"{field}Set"] = !string.IsNullOrEmpty(raw as string);
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -211,6 +234,7 @@ public class NightSummaryController : WebApiController
                     Response = new
                     {
                         Session = MapToDict(session),
+                        ReportAvailable = GetReportPath(sessionId) is string rp && File.Exists(rp),
                         Stats = new
                         {
                             TotalImages = lightImages.Count,
@@ -241,6 +265,44 @@ public class NightSummaryController : WebApiController
                 return (object)new ApiResponse { Success = false, Error = ex.InnerException?.Message ?? ex.Message };
             }
         });
+    }
+
+    /// <summary>
+    /// GET /api/nightsummary/sessions/{sessionId}/report — serve the session's full HTML report.
+    /// The report is written automatically for every session to
+    /// %LOCALAPPDATA%\NINA\NightSummary\reports\{sessionId}.html (keyed by SessionId).
+    /// Returns raw text/html (not a JSON ApiResponse) so it can be embedded in an iframe.
+    /// </summary>
+    [Route(HttpVerbs.Get, "/nightsummary/sessions/{sessionId}/report")]
+    public async Task GetSessionReport(string sessionId)
+    {
+        var reportPath = GetReportPath(sessionId);
+        if (reportPath == null || !File.Exists(reportPath))
+        {
+            HttpContext.Response.StatusCode = 404;
+            await HttpContext.SendStringAsync("Report not found", "text/plain", Encoding.UTF8);
+            return;
+        }
+
+        var html = await File.ReadAllTextAsync(reportPath);
+        await HttpContext.SendStringAsync(html, "text/html", Encoding.UTF8);
+    }
+
+    /// <summary>
+    /// Resolves the on-disk path of a session's HTML report
+    /// (%LOCALAPPDATA%\NINA\NightSummary\reports\{sessionId}.html).
+    /// Returns null if the sessionId would escape the reports directory (path-traversal guard).
+    /// Does not check for existence — callers use File.Exists on the result.
+    /// </summary>
+    private static string GetReportPath(string sessionId)
+    {
+        var reportsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "NINA", "NightSummary", "reports");
+        var reportPath = Path.GetFullPath(Path.Combine(reportsDir, Path.GetFileName(sessionId) + ".html"));
+        return reportPath.StartsWith(Path.GetFullPath(reportsDir), StringComparison.OrdinalIgnoreCase)
+            ? reportPath
+            : null;
     }
 
     /// <summary>DELETE /api/nightsummary/sessions/{sessionId} — delete a session and all its records.</summary>
@@ -336,6 +398,7 @@ public class NightSummaryController : WebApiController
                 return new ApiResponse { Success = false, Error = "Night Summary plugin not loaded" };
 
             var dict = MapToDict(settings);
+            MaskSecrets(dict);
             // Also build filter list from NINA profile
             var filters = GetProfileFilterNames();
             dict["_filterNames"] = filters;
@@ -368,6 +431,15 @@ public class NightSummaryController : WebApiController
 
                 foreach (var prop in doc.RootElement.EnumerateObject())
                 {
+                    // Secret fields are write-only: a blank value means "keep the current value",
+                    // so the client never has to round-trip a plaintext credential.
+                    if (SecretSettingsFields.Contains(prop.Name))
+                    {
+                        var incoming = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : null;
+                        if (string.IsNullOrEmpty(incoming))
+                            continue;
+                    }
+
                     var val = (object)prop.Value;
                     SetProp(settings, prop.Name, val);
                 }
