@@ -224,6 +224,10 @@ public static class LivestackBridge
                 return Failure(500, "Failed to create the color combination");
             }
 
+            // The constructor may already be rendering an initial image in the background
+            // (Locked=true) - settle that first so our own refresh below isn't racing it and
+            // AnnounceStackUpdateAsync doesn't read a still-empty StackImage.
+            await WaitForUnlockAsync(colorTab).ConfigureAwait(false);
             await RefreshAsync(colorTab).ConfigureAwait(false);
             await AnnounceStackUpdateAsync(colorTab, resolvedTarget).ConfigureAwait(false);
 
