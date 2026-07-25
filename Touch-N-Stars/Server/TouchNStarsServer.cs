@@ -55,6 +55,7 @@ namespace TouchNStars.Server {
                 .WithController<UtilityController>()    // Logs, version, api-port
                 .WithController<BahtinovController>()    // Bahtinov mask analysis
                 .WithController<INDIController>()        // INDI driver management
+                .WithController<LivestackController>()   // Livestack color combination control
                 .WithController<ProxyController>()       // Generic proxy for external URLs
                 .WithController<FilesystemController>()
                 .WithController<FitsAnalysisController>()
