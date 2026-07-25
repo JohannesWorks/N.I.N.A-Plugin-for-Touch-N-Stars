@@ -124,4 +124,11 @@ public class LivestackBridgeTests
         Assert.False(result.Ok);
         Assert.Equal(503, result.StatusCode);
     }
+
+    [Fact]
+    public async Task RefreshAndAnnounceAsync_WithoutLivestackPlugin_DoesNotThrow()
+    {
+        // Driven by every mono stack broadcast, so it must stay silent when there is nothing to do.
+        await LivestackBridge.RefreshAndAnnounceAsync("M31");
+    }
 }

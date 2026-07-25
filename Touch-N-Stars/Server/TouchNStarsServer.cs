@@ -18,6 +18,7 @@ namespace TouchNStars.Server {
     public class TouchNStarsServer {
         private Thread serverThread;
         private CancellationTokenSource apiToken;
+        private LivestackStackKeeper livestackStackKeeper;
         public WebServer WebServer;
 
         private readonly List<string> appEndPoints = ["equipment", "camera", "autofocus", "mount", "guider", "sequence", "settings", "seq-mon", "flat", "dome", "logs", "switch", "flats", "stellarium", "settings", "rotator", "filterwheel", "bahtinov", "plugin1", "plugin2", "plugin3", "plugin4", "plugin5", "plugin6", "plugin7", "plugin8", "plugin9", "plugin10", "plugin11", "plugin12", "plugin13", "plugin14", "plugin15", "plugin16", "plugin17", "plugin18", "plugin19", "plugin20", "plugin21", "plugin22", "plugin23", "plugin24", "plugin25", "plugin26", "plugin27", "plugin28", "plugin29", "plugin30", "plugin31", "plugin32", "plugin33", "plugin34", "plugin35", "plugin36", "plugin37", "plugin38", "plugin39", "plugin40", "plugin41", "plugin42", "plugin43", "plugin44", "plugin45", "plugin46", "plugin47", "plugin48", "plugin49", "plugin50", "plugin51", "plugin52", "plugin53", "plugin54", "plugin55", "plugin56", "plugin57", "plugin58", "plugin59"];
@@ -75,6 +76,7 @@ namespace TouchNStars.Server {
                     serverThread.Start();
                     BackgroundWorker.MonitorLogForEvents();
                     BackgroundWorker.MonitorLastAF();
+                    livestackStackKeeper = new LivestackStackKeeper();
                 }
             } catch (Exception ex) {
                 Logger.Error($"failed to start web server: {ex}");
@@ -87,6 +89,8 @@ namespace TouchNStars.Server {
                 WebServer?.Dispose();
                 WebServer = null;
                 BackgroundWorker.Cleanup();
+                livestackStackKeeper?.Dispose();
+                livestackStackKeeper = null;
             } catch (Exception ex) {
                 Logger.Error($"failed to stop API: {ex}");
             }

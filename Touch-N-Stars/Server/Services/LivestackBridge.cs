@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using NINA.Core.Utility;
 using TouchNStars.Server.Models;
+using TouchNStars.Utility;
 
 namespace TouchNStars.Server.Services;
 
@@ -224,6 +225,7 @@ public static class LivestackBridge
             }
 
             await RefreshAsync(colorTab).ConfigureAwait(false);
+            await AnnounceStackUpdateAsync(colorTab, resolvedTarget).ConfigureAwait(false);
 
             return new LivestackOperationResult
             {
@@ -302,6 +304,62 @@ public static class LivestackBridge
         {
             Logger.Error($"Failed to remove Livestack color combination for '{target}': {ex}");
             return Failure(500, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Re-renders the color combination of a target and announces it, unless Livestack already
+    /// did so itself.
+    ///
+    /// Livestack only refreshes a ColorCombinationTab when it is the selected tab in its dockable
+    /// or when "Save stacked lights" is on (see LivestackDockable.ShouldRefreshColorTab). On a
+    /// headless or remote setup neither is usually true, so the combined image would never be
+    /// updated - and never reach the app - while the mono stacks keep growing.
+    /// </summary>
+    internal static async Task RefreshAndAnnounceAsync(string target)
+    {
+        try
+        {
+            if (!TryGetBinding(out LivestackBinding binding))
+            {
+                return;
+            }
+
+            object dockable = GetDockable(binding);
+            if (dockable == null)
+            {
+                return;
+            }
+
+            object colorTab = GetTabs(dockable).FirstOrDefault(
+                t => binding.ColorCombinationTabType.IsInstanceOfType(t)
+                     && string.Equals(GetTabTarget(t), target, StringComparison.Ordinal));
+
+            if (colorTab == null)
+            {
+                return;
+            }
+
+            // Settle first: Livestack may be rendering this very tab right now.
+            if (!await WaitForUnlockAsync(colorTab).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            // If Livestack refreshed it itself (its tab was selected), it also broadcast, and
+            // rendering again would only waste CPU on the NINA machine.
+            bool needsRefresh = GetProperty(colorTab, "NeedsRefresh") as bool? ?? false;
+            if (!needsRefresh && GetProperty(colorTab, "StackImage") != null)
+            {
+                return;
+            }
+
+            await RefreshAsync(colorTab).ConfigureAwait(false);
+            await AnnounceStackUpdateAsync(colorTab, target).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"Failed to refresh the Livestack color combination for '{target}': {ex.Message}");
         }
     }
 
@@ -485,6 +543,48 @@ public static class LivestackBridge
         if (refresh.Invoke(colorTab, new object[] { CancellationToken.None }) is Task task)
         {
             await task.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Announces the re-rendered combined image on Livestack's stack update topic.
+    ///
+    /// Livestack only broadcasts after stacking a frame, so without this the Advanced API - whose
+    /// /livestack/image/available list is built solely from that topic - would not offer the new
+    /// RGB image for display until the next frame arrives.
+    /// </summary>
+    private static async Task AnnounceStackUpdateAsync(object colorTab, string target)
+    {
+        try
+        {
+            object image = GetProperty(colorTab, "StackImage");
+            if (image == null)
+            {
+                // Refresh produced no image (e.g. a channel has no stack data yet) - nothing to announce.
+                return;
+            }
+
+            var content = new LivestackStackUpdateContent
+            {
+                IsMonochrome = false,
+                StackCount = null,
+                RedStackCount = GetIntProperty(colorTab, "StackCountRed"),
+                GreenStackCount = GetIntProperty(colorTab, "StackCountGreen"),
+                BlueStackCount = GetIntProperty(colorTab, "StackCountBlue"),
+                Filter = GetTabFilter(colorTab),
+                Target = target,
+                Image = image
+            };
+
+            await TouchNStars.Mediators.MessageBroker
+                .Publish(new LivestackStackUpdateMessage(content))
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The combination itself was applied - a failed announcement only delays the image
+            // showing up in the app until the next stacked frame.
+            Logger.Warning($"Failed to announce the Livestack stack update for '{target}': {ex.Message}");
         }
     }
 
