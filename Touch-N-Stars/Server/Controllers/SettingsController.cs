@@ -22,6 +22,51 @@ public class SettingsController : WebApiController
     );
     private static readonly object _fileLock = new();
 
+    // Cache for the static read path (see TryGetRawSetting). Guarded by _fileLock.
+    private static Dictionary<string, string> _fileCache;
+    private static DateTime _fileCacheStampUtc;
+    private static long _fileCacheLength;
+
+    /// <summary>
+    /// Reads a raw setting value without going through the HTTP layer, for code that
+    /// runs outside a request (e.g. FlatTargetNameService on the image save pipeline).
+    /// The parsed file is cached and re-read only when its timestamp or length changes.
+    /// </summary>
+    public static bool TryGetRawSetting(string key, out string value)
+    {
+        value = null;
+        if (string.IsNullOrEmpty(key)) return false;
+
+        lock (_fileLock)
+        {
+            try
+            {
+                var info = new FileInfo(SettingsFilePath);
+                if (!info.Exists)
+                {
+                    _fileCache = null;
+                    return false;
+                }
+
+                if (_fileCache == null || info.LastWriteTimeUtc != _fileCacheStampUtc || info.Length != _fileCacheLength)
+                {
+                    var json = File.ReadAllText(SettingsFilePath);
+                    _fileCache = JsonSerializer.Deserialize<Dictionary<string, string>>(json, new JsonSerializerOptions { AllowTrailingCommas = true }) ?? new();
+                    _fileCacheStampUtc = info.LastWriteTimeUtc;
+                    _fileCacheLength = info.Length;
+                }
+
+                return _fileCache.TryGetValue(key, out value);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Failed to read setting '{key}': {ex.Message}");
+                _fileCache = null;
+                return false;
+            }
+        }
+    }
+
     /// <summary>
     /// POST /api/settings - Save or create a setting
     /// </summary>
@@ -61,6 +106,7 @@ public class SettingsController : WebApiController
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
                 File.WriteAllText(SettingsFilePath, updatedJson);
+                _fileCache = null;
             }
 
             return new ApiResponse
@@ -218,6 +264,7 @@ public class SettingsController : WebApiController
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
                 File.WriteAllText(SettingsFilePath, updatedJson);
+                _fileCache = null;
             }
 
             return new ApiResponse
@@ -298,6 +345,7 @@ public class SettingsController : WebApiController
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
                 File.WriteAllText(SettingsFilePath, updatedJson);
+                _fileCache = null;
             }
 
             return new ApiResponse

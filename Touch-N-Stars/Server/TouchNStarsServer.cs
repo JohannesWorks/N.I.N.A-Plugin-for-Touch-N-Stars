@@ -74,6 +74,7 @@ namespace TouchNStars.Server {
                     serverThread.Start();
                     BackgroundWorker.MonitorLogForEvents();
                     BackgroundWorker.MonitorLastAF();
+                    FlatTargetNameService.Start();
                 }
             } catch (Exception ex) {
                 Logger.Error($"failed to start web server: {ex}");
@@ -82,6 +83,7 @@ namespace TouchNStars.Server {
 
         public void Stop() {
             try {
+                FlatTargetNameService.Stop();
                 apiToken?.Cancel();
                 WebServer?.Dispose();
                 WebServer = null;

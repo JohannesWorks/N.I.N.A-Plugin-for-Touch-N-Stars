@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added an optional target name for flats taken through the flat assistant, so `$$TARGETNAME$$` no longer resolves to nothing in the file name pattern. Off by default, configured in the flat assistant; frames that already carry a target name are never changed
 - Added Night Summary plugin integration: new `/api/nightsummary/*` endpoints for sessions, settings, test notifications and report resending
 - Fixed post-build deployment copying the plugin to a folder named `Touch ''N'' Stars` instead of `Touch 'N' Stars`
 

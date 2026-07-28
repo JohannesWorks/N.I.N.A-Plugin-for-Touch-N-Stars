@@ -5,6 +5,7 @@ using NINA.Image.Interfaces;
 using NINA.Plugin;
 using NINA.Plugin.Interfaces;
 using NINA.Profile.Interfaces;
+using NINA.WPF.Base.Interfaces.Mediator;
 using NINA.WPF.Base.Interfaces.ViewModel;
 using System;
 using System.Collections.Generic;
@@ -28,6 +29,7 @@ namespace TouchNStars {
         IFramingAssistantVM framingAssistantVM,
         IProfileService profile,
         IGuiderMediator guider,
+        IImageSaveMediator imageSaveMediator,
         IMessageBroker broker) {
 
         public readonly IDeepSkyObjectSearchVM DeepSkyObjectSearchVM = DeepSkyObjectSearchVM;
@@ -35,6 +37,7 @@ namespace TouchNStars {
         public readonly IFramingAssistantVM FramingAssistantVM = framingAssistantVM;
         public readonly IProfileService Profile = profile;
         public readonly IGuiderMediator Guider = guider;
+        public readonly IImageSaveMediator ImageSaveMediator = imageSaveMediator;
         public readonly IMessageBroker MessageBroker = broker;
     }
 
@@ -60,6 +63,7 @@ namespace TouchNStars {
                     IImageDataFactory imageDataFactory,
                     IFramingAssistantVM framingAssistantVM,
                     IGuiderMediator guider,
+                    IImageSaveMediator imageSaveMediator,
                     IMessageBroker broker) {
             if (Settings.Default.UpdateSettings) {
                 Settings.Default.Upgrade();
@@ -75,6 +79,7 @@ namespace TouchNStars {
                             framingAssistantVM,
                             profileService,
                             guider,
+                            imageSaveMediator,
                             broker);
 
             UpdateDefaultPortCommand = new CommunityToolkit.Mvvm.Input.RelayCommand(() => {
