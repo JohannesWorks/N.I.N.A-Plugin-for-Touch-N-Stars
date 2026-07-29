@@ -43,7 +43,7 @@ public class FlatTargetNameServiceTests
     [InlineData(null)]
     public void LeavesEveryImageTypeOtherThanFlatAlone(string? imageType)
     {
-        var stamped = FlatTargetNameService.TryResolveTargetName(Enabled, imageType, null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(Enabled, imageType!, null!, out var name);
 
         Assert.False(stamped);
         Assert.Null(name);
@@ -52,7 +52,7 @@ public class FlatTargetNameServiceTests
     [Fact]
     public void MatchesImageTypeCaseInsensitively()
     {
-        var stamped = FlatTargetNameService.TryResolveTargetName(Enabled, "flat", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(Enabled, "flat", null!, out var name);
 
         Assert.True(stamped);
         Assert.Equal("Flat Wizard", name);
@@ -66,7 +66,7 @@ public class FlatTargetNameServiceTests
     [InlineData("""{"targetNameEnabled":true}""")]
     public void StaysInertWhenTheSettingIsOffOrIncomplete(string json)
     {
-        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null!, out var name);
 
         Assert.False(stamped);
         Assert.Null(name);
@@ -82,7 +82,7 @@ public class FlatTargetNameServiceTests
     [InlineData("""{"targetNameEnabled":"yes","targetName":42}""")]
     public void SurvivesUnusableSettingsPayloads(string? json)
     {
-        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(json!, "FLAT", null!, out var name);
 
         Assert.False(stamped);
         Assert.Null(name);
@@ -96,23 +96,24 @@ public class FlatTargetNameServiceTests
              "targetNameEnabled":true,"targetName":"Flats"}
             """;
 
-        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null!, out var name);
 
         Assert.True(stamped);
         Assert.Equal("Flats", name);
     }
 
     [Fact]
-    public void StripsPathSeparatorsAndInvalidFileNameCharacters()
+    public void StripsPathSeparatorsAndTrimsTheResult()
     {
-        const string json = """{"targetNameEnabled":true,"targetName":" M31/Ha:1\\sub "}""";
+        const string json = """{"targetNameEnabled":true,"targetName":" M31/Ha\\sub "}""";
 
-        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null!, out var name);
 
         Assert.True(stamped);
-        Assert.DoesNotContain('/', name);
-        Assert.DoesNotContain('\\', name);
-        Assert.DoesNotContain(':', name);
+        // Both slashes are mapped unconditionally by ReplaceAllInvalidFilenameChars.
+        // The remaining invalid set is OS dependent, so it is not asserted here.
+        Assert.DoesNotContain('/', name!);
+        Assert.DoesNotContain('\\', name!);
         Assert.Equal(name, name!.Trim());
     }
 
@@ -121,9 +122,22 @@ public class FlatTargetNameServiceTests
     {
         var json = $$"""{"targetNameEnabled":true,"targetName":"{{new string('x', 200)}}"}""";
 
-        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null, out var name);
+        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null!, out var name);
 
         Assert.True(stamped);
         Assert.True(name!.Length <= 64, $"expected at most 64 chars, got {name.Length}");
+    }
+
+    [Fact]
+    public void DoesNotSplitASurrogatePairWhenCapping()
+    {
+        // 40 astral-plane characters = 80 UTF-16 code units, so the cap lands mid-pair.
+        var json = $$"""{"targetNameEnabled":true,"targetName":"{{string.Concat(Enumerable.Repeat("\U0001F600", 40))}}"}""";
+
+        var stamped = FlatTargetNameService.TryResolveTargetName(json, "FLAT", null!, out var name);
+
+        Assert.True(stamped);
+        Assert.True(name!.Length <= 64);
+        Assert.False(char.IsHighSurrogate(name[name.Length - 1]), "trailing lone surrogate");
     }
 }

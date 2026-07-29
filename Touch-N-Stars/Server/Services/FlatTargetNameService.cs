@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using NINA.Core.Utility;
@@ -15,7 +14,10 @@ namespace TouchNStars.Server.Services;
 /// Flats taken through the Touch-N-Stars flat assistant are captured by sequencer
 /// items that are instantiated standalone (no parent container), so NINA's
 /// FillTargetMetaData finds no deep sky object and leaves Target.Name empty -
-/// which makes $$TARGETNAME$$ resolve to nothing in the file name pattern.
+/// which makes $$TARGETNAME$$ resolve to nothing in the file name pattern. The
+/// single-filter modes run through ninaAPI rather than this plugin, so the handler
+/// is deliberately attached for the lifetime of the server instead of being scoped
+/// to a capture run: it applies to any FLAT frame with no target name, whoever took it.
 ///
 /// Frames that already carry a target name are never touched, so sequence flats
 /// keep their deep sky object name and NINA's own flat wizard keeps "FlatWizard".
@@ -27,10 +29,6 @@ public static class FlatTargetNameService
 
     private static readonly object gate = new();
     private static Func<object, BeforeImageSavedEventArgs, Task> handler;
-
-    // Parse cache, keyed on the raw JSON string the settings store returns.
-    private static string cachedRaw;
-    private static (bool Enabled, string Name) cachedConfig;
 
     public static void Start()
     {
@@ -64,7 +62,6 @@ public static class FlatTargetNameService
             }
 
             handler = null;
-            cachedRaw = null;
             Logger.Debug("FlatTargetNameService stopped");
         }
     }
@@ -79,6 +76,10 @@ public static class FlatTargetNameService
         {
             var metaData = e?.Image?.MetaData;
             if (metaData?.Target == null) return Task.CompletedTask;
+
+            // Cheapest guards first: this keeps every non-flat frame - the vast
+            // majority - away from the settings file entirely.
+            if (!IsStampableFlat(metaData.Image?.ImageType, metaData.Target.Name)) return Task.CompletedTask;
 
             if (!SettingsController.TryGetRawSetting(SettingsKey, out var raw)) return Task.CompletedTask;
 
@@ -97,18 +98,26 @@ public static class FlatTargetNameService
     }
 
     /// <summary>
+    /// True when this frame is a flat that nobody has named yet.
+    /// </summary>
+    public static bool IsStampableFlat(string imageType, string existingTargetName)
+    {
+        // Never clobber a name somebody else already set.
+        if (!string.IsNullOrWhiteSpace(existingTargetName)) return false;
+
+        // Flats only. Dark flats are captured as ImageType DARK, which would also
+        // cover regular dark libraries, so they are deliberately left alone.
+        return string.Equals(imageType, CaptureSequence.ImageTypes.FLAT, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Pure decision logic, kept free of NINA mediators so it can be unit tested.
     /// </summary>
     public static bool TryResolveTargetName(string flatsSettingsJson, string imageType, string existingTargetName, out string name)
     {
         name = null;
 
-        // Never clobber a name somebody else already set.
-        if (!string.IsNullOrWhiteSpace(existingTargetName)) return false;
-
-        // Flats only. Dark flats are captured as ImageType DARK, which would also
-        // cover regular dark libraries, so they are deliberately left alone.
-        if (!string.Equals(imageType, CaptureSequence.ImageTypes.FLAT, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!IsStampableFlat(imageType, existingTargetName)) return false;
 
         var config = ParseConfig(flatsSettingsJson);
         if (!config.Enabled || string.IsNullOrWhiteSpace(config.Name)) return false;
@@ -117,59 +126,54 @@ public static class FlatTargetNameService
         return !string.IsNullOrEmpty(name);
     }
 
+    /// <summary>
+    /// Parses the two fields this service cares about out of the flat assistant's
+    /// settings blob, tolerating every other field the frontend stores alongside them.
+    /// Deliberately uncached: this runs once per flat frame and parsing a few hundred
+    /// bytes is cheaper than getting the cross-thread publication of a cache right.
+    /// </summary>
     private static (bool Enabled, string Name) ParseConfig(string json)
     {
         if (string.IsNullOrWhiteSpace(json)) return (false, null);
 
-        // Reference check first: the settings blob is usually the very same string instance.
-        if (ReferenceEquals(json, cachedRaw) || string.Equals(json, cachedRaw, StringComparison.Ordinal))
-        {
-            return cachedConfig;
-        }
-
-        var parsed = (Enabled: false, Name: (string)null);
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("targetNameEnabled", out var enabled) &&
-                    (enabled.ValueKind == JsonValueKind.True || enabled.ValueKind == JsonValueKind.False))
-                {
-                    parsed.Enabled = enabled.GetBoolean();
-                }
+            if (root.ValueKind != JsonValueKind.Object) return (false, null);
 
-                if (root.TryGetProperty("targetName", out var targetName) && targetName.ValueKind == JsonValueKind.String)
-                {
-                    parsed.Name = targetName.GetString();
-                }
-            }
+            var enabled = root.TryGetProperty("targetNameEnabled", out var enabledElement) &&
+                          enabledElement.ValueKind == JsonValueKind.True;
+
+            var name = root.TryGetProperty("targetName", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
+                ? nameElement.GetString()
+                : null;
+
+            return (enabled, name);
         }
         catch (JsonException)
         {
-            parsed = (false, null);
+            return (false, null);
         }
-
-        cachedRaw = json;
-        cachedConfig = parsed;
-        return parsed;
     }
 
     /// <summary>
     /// The value arrives from a network client and ends up in a file path, so strip
-    /// anything that cannot appear in a file name and cap the length.
+    /// anything that cannot appear in a file name and cap the length. Note that the
+    /// invalid character set is OS dependent - this is a guard rail, not a promise
+    /// that any particular character survives.
     /// </summary>
     private static string Sanitize(string value)
     {
-        var sanitized = CoreUtil.ReplaceAllInvalidFilenameChars(value.Trim())
-            .Replace(Path.DirectorySeparatorChar, '_')
-            .Replace(Path.AltDirectorySeparatorChar, '_')
-            .Trim();
+        // ReplaceAllInvalidFilenameChars already maps both slashes to a hyphen.
+        var sanitized = CoreUtil.ReplaceAllInvalidFilenameChars(value.Trim()).Trim();
 
         if (sanitized.Length > MaxNameLength)
         {
-            sanitized = sanitized.Substring(0, MaxNameLength).Trim();
+            var cut = MaxNameLength;
+            // Do not cut a surrogate pair in half and leave a lone surrogate in a path.
+            if (char.IsHighSurrogate(sanitized[cut - 1])) cut--;
+            sanitized = sanitized.Substring(0, cut).Trim();
         }
 
         return sanitized;
