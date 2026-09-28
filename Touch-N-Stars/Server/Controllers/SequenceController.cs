@@ -37,10 +37,15 @@ namespace TouchNStars.Server.Controllers
         {
             public object Value { get; set; }
             public ObjectType Type { get; set; }
+            public long Seq { get; set; }
         }
 
-        // Single global dictionary for all IDs - STATIC so it persists across HTTP requests
-        private static Dictionary<string, TrackedObject> objectIdMap = new();
+        // Global ID registry for all sequence objects - STATIC so it persists across HTTP requests.
+        // EmbedIO serves requests concurrently (status polling runs next to edits), so every access
+        // goes through idLock. byObject is the reverse index that keeps lookups O(1) for big trees.
+        private static readonly object idLock = new();
+        private static readonly Dictionary<string, TrackedObject> objectIdMap = new();
+        private static readonly Dictionary<object, string> idByObject = new(ReferenceEqualityComparer.Instance);
         private static long idCounter = 0;
         private static ISequenceRootContainer lastLoadedSequence = null;
 
@@ -313,18 +318,31 @@ namespace TouchNStars.Server.Controllers
         /// GET /api/sequence/files - List all available sequence files
         /// </summary>
         [Route(HttpVerbs.Get, "/sequence/files")]
-        public SequenceListResponse ListSequenceFiles()
+        public SequenceListResponse ListSequenceFiles([QueryField] string folderPath = null)
         {
             try
             {
                 var sequenceFiles = new List<SequenceFileInfo>();
                 var searchDirectories = new List<string>();
 
-                // Try to get the profile sequence directory
-                var profileDir = TouchNStars.Mediators?.Profile?.ActiveProfile?.SequenceSettings?.DefaultSequenceFolder;
-                if (!string.IsNullOrEmpty(profileDir) && Directory.Exists(profileDir))
+                // An explicit folder from the client wins as long as it lies inside the profile sequence
+                // directory (a subfolder); anything else would let a client crawl the whole disk.
+                var profileDir = GetSequenceFolder();
+                bool clientFolderAllowed = false;
+                if (!string.IsNullOrEmpty(folderPath) && !string.IsNullOrEmpty(profileDir) && Directory.Exists(folderPath))
                 {
-                    searchDirectories.Add(profileDir);
+                    try
+                    {
+                        var fullFolder = Path.GetFullPath(folderPath);
+                        clientFolderAllowed = string.Equals(fullFolder.TrimEnd('\\', '/'), Path.GetFullPath(profileDir).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
+                            || IsInsideFolder(fullFolder, profileDir);
+                    }
+                    catch { /* invalid path - use the profile folder */ }
+                }
+                var sequenceDir = clientFolderAllowed ? folderPath : profileDir;
+                if (!string.IsNullOrEmpty(sequenceDir) && Directory.Exists(sequenceDir))
+                {
+                    searchDirectories.Add(sequenceDir);
                 }
 
                 // Search all directories for .seq files
@@ -404,6 +422,10 @@ namespace TouchNStars.Server.Controllers
                         Type = "Error"
                     };
                 }
+
+                if (!TryResolveSequenceFile(filePath, out var resolvedPath, out var pathRejection))
+                    return pathRejection;
+                filePath = resolvedPath;
 
                 if (!File.Exists(filePath))
                 {
@@ -581,14 +603,18 @@ namespace TouchNStars.Server.Controllers
                         };
                     }
 
-                    List<Hashtable> sequenceData =
+                    EnsureIdScope(mainContainer);
+
+                    // Plugins like Target Scheduler add and remove items while the sequence runs,
+                    // which can break the enumeration half way - retry once on a fresh walk.
+                    List<Hashtable> sequenceData = RetryOnConcurrentModification<List<Hashtable>>(() =>
                     [
                         new Hashtable() {
                             { "Id", GetOrCreateId(mainContainer, ObjectType.Item) },
                             { "GlobalTriggers", getTriggers((SequenceContainer)mainContainer) }
                         },
                         .. getSequenceRecursively(mainContainer),
-                    ]; // Global triggers
+                    ]); // Global triggers
 
                     HttpContext.Response.StatusCode = 200;
                     WriteSequenceResponseData(HttpContext, sequenceData);
@@ -622,7 +648,244 @@ namespace TouchNStars.Server.Controllers
             }
         }
 
+        // Fields that change while a sequence runs. Kept in sync with RUNTIME_FIELDS in the
+        // Touch'N'Stars frontend (src/store/sequenceV2Store.js).
+        private static readonly string[] RuntimeFieldNames = {
+            "ExpectedTime", "ExpectedTimeStr", "CurrentAltitude", "CurrentIllumination", "TargetIllumination",
+            "CurrentMoonIllumination", "UserMoonIllumination", "CompletedIterations", "RemainingTime",
+            "TargetTime", "InterruptReason", "Progress" };
+
         /// <summary>
+        /// GET /api/sequence/status - Lightweight poll endpoint.
+        /// Returns a flat list of {Id, Status, runtime fields} for every item, trigger and condition,
+        /// plus a Revision hash over the tree structure. The client only has to reload
+        /// /sequence/current when Revision changes; otherwise it merges the list by Id.
+        /// </summary>
+        [Route(HttpVerbs.Get, "/sequence/status")]
+        public object GetSequenceStatus()
+        {
+            try
+            {
+                var sequenceMediator = TouchNStars.Mediators?.Sequence;
+                var mainContainer = sequenceMediator != null && sequenceMediator.Initialized ? GetMainContainer() : null;
+                if (mainContainer == null)
+                {
+                    HttpContext.Response.StatusCode = 400;
+                    return new { Success = false, Error = "No sequence loaded", StatusCode = 400, Type = "Error" };
+                }
+
+                EnsureIdScope(mainContainer);
+
+                var walkStartSeq = CurrentIdSeq();
+                var (entries, revision, seen) = RetryOnConcurrentModification(() =>
+                {
+                    var list = new List<Hashtable>();
+                    var structure = new System.Text.StringBuilder();
+                    var visited = new HashSet<object>(ReferenceEqualityComparer.Instance) { mainContainer };
+                    CollectStatus(mainContainer, list, structure, visited);
+                    return (list, HashStructure(structure.ToString()), visited);
+                });
+                PruneRegistry(seen, walkStartSeq);
+
+                HttpContext.Response.StatusCode = 200;
+                WriteSequenceResponseData(HttpContext, new Hashtable
+                {
+                    { "Success", true },
+                    { "Revision", revision },
+                    { "Running", sequenceMediator.IsAdvancedSequenceRunning() },
+                    { "Items", entries }
+                });
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error getting sequence status: {ex}");
+                HttpContext.Response.StatusCode = 500;
+                return new { Success = false, Error = $"Internal server error: {ex.Message}", StatusCode = 500, Type = "Error" };
+            }
+        }
+
+        private static void CollectStatus(ISequenceContainer container, List<Hashtable> list, System.Text.StringBuilder structure,
+            HashSet<object> visited)
+        {
+            var containerId = GetOrCreateId(container, ObjectType.Item);
+
+            // Enumerate the live collections instead of ToArray(): their enumerator reliably throws
+            // InvalidOperationException on a concurrent change (-> retry), while copying a list that
+            // is being resized can silently yield missing or null entries.
+            if (container is SequenceContainer sc)
+            {
+                foreach (var trigger in sc.Triggers)
+                {
+                    visited.Add(trigger);
+                    AddStatusEntry(trigger, GetOrCreateId(trigger, ObjectType.Trigger), trigger.Status, containerId, "T", list, structure);
+                }
+                foreach (var condition in sc.Conditions)
+                {
+                    visited.Add(condition);
+                    AddStatusEntry(condition, GetOrCreateId(condition, ObjectType.Condition), condition.Status, containerId, "C", list, structure);
+                }
+            }
+
+            foreach (var item in container.Items)
+            {
+                visited.Add(item);
+                var id = GetOrCreateId(item, ObjectType.Item);
+                AddStatusEntry(item, id, item.Status, containerId, "I", list, structure);
+                if (item is ISequenceContainer child)
+                    CollectStatus(child, list, structure, visited);
+            }
+        }
+
+        private static void AddStatusEntry(object obj, string id, NINA.Core.Enum.SequenceEntityStatus status, string parentId,
+            string kind, List<Hashtable> list, System.Text.StringBuilder structure)
+        {
+            structure.Append(parentId).Append('>').Append(kind).Append(id).Append(';');
+
+            var entry = new Hashtable
+            {
+                { "Id", id },
+                { "Status", status.ToString() }
+            };
+
+            var type = obj.GetType();
+            object data = null;
+            try { data = type.GetProperty("Data", BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj); }
+            catch { /* no WaitLoopData on this entity */ }
+
+            foreach (var name in RuntimeFieldNames)
+            {
+                try
+                {
+                    var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                    object owner = obj;
+                    if (prop == null && data != null)
+                    {
+                        prop = data.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                        owner = data;
+                    }
+                    if (prop == null || prop.GetIndexParameters().Length > 0)
+                        continue;
+                    var value = prop.GetValue(owner);
+                    entry[name] = value is TimeSpan ts ? ts.ToString(@"hh\:mm\:ss") : SafeSerializeValue(value);
+                }
+                catch { /* skip fields that throw */ }
+            }
+
+            list.Add(entry);
+        }
+
+        /// <summary>
+        /// Stable 64-bit FNV-1a hash, rendered as hex. string.GetHashCode() is randomized per
+        /// process, so it cannot be used for a value clients compare across requests.
+        /// </summary>
+        private static string HashStructure(string text)
+        {
+            ulong hash = 14695981039346656037UL;
+            foreach (char c in text)
+            {
+                hash ^= c;
+                hash *= 1099511628211UL;
+            }
+            return hash.ToString("x16");
+        }
+
+        private static T RetryOnConcurrentModification<T>(Func<T> read)
+        {
+            const int maxAttempts = 3;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    return read();
+                }
+                catch (InvalidOperationException ex) when (attempt < maxAttempts)
+                {
+                    Logger.Debug($"Sequence changed while reading, retrying: {ex.Message}");
+                }
+            }
+        }
+
+        private static string GetSequenceFolder()
+        {
+            return TouchNStars.Mediators?.Profile?.ActiveProfile?.SequenceSettings?.DefaultSequenceFolder;
+        }
+
+        private static bool IsInsideFolder(string fullPath, string folder)
+        {
+            var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                       + Path.DirectorySeparatorChar;
+            return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Sequence files may only be read, written and deleted as .json files below the sequence
+        /// folder of the active profile. Without this a client could delete or overwrite any file
+        /// NINA can access, including its own profiles. Relative paths resolve against that folder.
+        /// </summary>
+        private bool TryResolveSequenceFile(string filePath, out string fullPath, out ApiResponse rejection)
+        {
+            fullPath = null;
+            rejection = null;
+            string error = null;
+
+            var folder = GetSequenceFolder();
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                error = "No sequence folder is configured in the active NINA profile";
+            }
+            else
+            {
+                try
+                {
+                    var combined = Path.IsPathRooted(filePath) ? filePath : Path.Combine(folder, filePath);
+                    fullPath = Path.GetFullPath(combined);
+                }
+                catch (Exception ex)
+                {
+                    error = $"Invalid file path: {ex.Message}";
+                }
+
+                if (error == null && !IsInsideFolder(fullPath, folder))
+                    error = $"Sequence files must be inside the sequence folder '{folder}'";
+                else if (error == null && !string.Equals(Path.GetExtension(fullPath), ".json", StringComparison.OrdinalIgnoreCase))
+                    error = "Only .json sequence files are allowed";
+            }
+
+            if (error == null)
+                return true;
+
+            fullPath = null;
+            HttpContext.Response.StatusCode = 400;
+            rejection = new ApiResponse { Success = false, Error = error, StatusCode = 400, Type = "Error" };
+            return false;
+        }
+
+        private static bool IsRunning(object obj)
+        {
+            return obj is ISequenceEntity entity && entity.Status == NINA.Core.Enum.SequenceEntityStatus.RUNNING;
+        }
+
+        /// <summary>
+        /// The node the sequencer is executing right now must not be changed, moved, disabled,
+        /// reset or removed. Children of a running container stay editable, like in NINA itself.
+        /// The client hides those actions as well, but its status comes from a poll and can lag.
+        /// Returns the 409 response to send, or null when the object may be changed.
+        /// </summary>
+        private ApiResponse RejectIfRunning(object obj)
+        {
+            if (!IsRunning(obj))
+                return null;
+            HttpContext.Response.StatusCode = 409;
+            return new ApiResponse
+            {
+                Success = false,
+                Error = "The item is currently running and cannot be changed",
+                StatusCode = 409,
+                Type = "Error"
+            };
+        }
+
         /// <summary>
         /// POST /api/sequence/move - Move a sequence item, trigger, or condition before or after a target (by ID)
         /// id: ID of the object to move (item, trigger, or condition)
@@ -670,6 +933,10 @@ namespace TouchNStars.Server.Controllers
                             Error = $"Object to move not found with ID: {id}",
                         };
                     }
+
+                    var runningRejection = RejectIfRunning(objectToMove);
+                    if (runningRejection != null)
+                        return runningRejection;
 
                     // Find the target object
                     var targetObject = FindObjectById(targetId);
@@ -811,31 +1078,9 @@ namespace TouchNStars.Server.Controllers
                 }
                 else
                 {
-                    // Type not found in factory - try reflection for full names
-                    try
-                    {
-                        var resolvedType = Type.GetType(type);
-                        if (resolvedType != null)
-                        {
-                            // Try to instantiate and determine what it is
-                            var instance = Activator.CreateInstance(resolvedType);
-
-                            if (instance is ISequenceItem)
-                            {
-                                return AddSequenceItem(targetId, type, insertAfter);
-                            }
-                            else if (instance is ISequenceTrigger)
-                            {
-                                return AddTrigger(targetId, type, insertAfter);
-                            }
-                            else if (instance is ISequenceCondition)
-                            {
-                                return AddCondition(targetId, type, insertAfter);
-                            }
-                        }
-                    }
-                    catch { /* Fall through to error */ }
-
+                    // Only types offered by NINA's sequencer factory can be added. Instantiating a
+                    // client-supplied type name would run arbitrary constructors and create items
+                    // without the dependencies the factory injects.
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse
                     {
@@ -1318,20 +1563,6 @@ namespace TouchNStars.Server.Controllers
                     if (factory?.Items != null)
                     {
                         templateItem = factory.Items.FirstOrDefault(item => item.GetType().FullName == itemType || item.GetType().Name == itemType);
-                    }
-
-                    // If not found in factory, try reflection as fallback for full type names
-                    if (templateItem == null && itemType.Contains("."))
-                    {
-                        try
-                        {
-                            var resolvedType = Type.GetType(itemType);
-                            if (resolvedType != null && typeof(ISequenceItem).IsAssignableFrom(resolvedType))
-                            {
-                                templateItem = Activator.CreateInstance(resolvedType) as ISequenceItem;
-                            }
-                        }
-                        catch { /* Fall through to error */ }
                     }
 
                     if (templateItem == null)
@@ -1848,20 +2079,6 @@ namespace TouchNStars.Server.Controllers
 
                     var templateTrigger = factory.Triggers.FirstOrDefault(t => t.GetType().Name == triggerType || t.GetType().FullName == triggerType);
 
-                    // If not found in factory, try reflection as fallback for full type names
-                    if (templateTrigger == null && triggerType.Contains("."))
-                    {
-                        try
-                        {
-                            var resolvedType = Type.GetType(triggerType);
-                            if (resolvedType != null && typeof(ISequenceTrigger).IsAssignableFrom(resolvedType))
-                            {
-                                templateTrigger = Activator.CreateInstance(resolvedType) as ISequenceTrigger;
-                            }
-                        }
-                        catch { /* Fall through to error */ }
-                    }
-
                     if (templateTrigger == null)
                     {
                         HttpContext.Response.StatusCode = 400;
@@ -2003,6 +2220,10 @@ namespace TouchNStars.Server.Controllers
                         };
                     }
 
+                    var runningRejection = RejectIfRunning(FindObjectById(id));
+                    if (runningRejection != null)
+                        return runningRejection;
+
                     var mainContainer = GetMainContainer();
                     if (mainContainer == null)
                     {
@@ -2048,7 +2269,7 @@ namespace TouchNStars.Server.Controllers
                     }
 
                     // Remove from tracking
-                    objectIdMap.Remove(id);
+                    UntrackId(id);
 
                     HttpContext.Response.StatusCode = 200;
                     return new ApiResponse
@@ -2179,20 +2400,6 @@ namespace TouchNStars.Server.Controllers
 
                     var templateCondition = factory.Conditions.FirstOrDefault(c => c.GetType().Name == conditionType || c.GetType().FullName == conditionType);
 
-                    // If not found in factory, try reflection as fallback for full type names
-                    if (templateCondition == null && conditionType.Contains("."))
-                    {
-                        try
-                        {
-                            var resolvedType = Type.GetType(conditionType);
-                            if (resolvedType != null && typeof(ISequenceCondition).IsAssignableFrom(resolvedType))
-                            {
-                                templateCondition = Activator.CreateInstance(resolvedType) as ISequenceCondition;
-                            }
-                        }
-                        catch { /* Fall through to error */ }
-                    }
-
                     if (templateCondition == null)
                     {
                         HttpContext.Response.StatusCode = 400;
@@ -2308,6 +2515,10 @@ namespace TouchNStars.Server.Controllers
                     return new ApiResponse { Success = false, Error = "filePath parameter required", StatusCode = 400, Type = "Error" };
                 }
 
+                if (!TryResolveSequenceFile(filePath, out var resolvedPath, out var pathRejection))
+                    return pathRejection;
+                filePath = resolvedPath;
+
                 var sequenceMediator = TouchNStars.Mediators?.Sequence;
                 if (sequenceMediator == null || !sequenceMediator.Initialized)
                 {
@@ -2325,7 +2536,7 @@ namespace TouchNStars.Server.Controllers
                         return new ApiResponse { Success = false, Error = "No sequence loaded", StatusCode = 400, Type = "Error" };
                     }
 
-                    // Ensure directory exists
+                    // Ensure directory exists (only subfolders of the sequence folder can get here)
                     var directory = Path.GetDirectoryName(filePath);
                     if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                         Directory.CreateDirectory(directory);
@@ -2374,6 +2585,10 @@ namespace TouchNStars.Server.Controllers
                     HttpContext.Response.StatusCode = 400;
                     return new ApiResponse { Success = false, Error = "filePath parameter required", StatusCode = 400, Type = "Error" };
                 }
+
+                if (!TryResolveSequenceFile(filePath, out var resolvedPath, out var pathRejection))
+                    return pathRejection;
+                filePath = resolvedPath;
 
                 if (!File.Exists(filePath))
                 {
@@ -2543,7 +2758,7 @@ namespace TouchNStars.Server.Controllers
                 // For non-structural container items with subitems, show the Items formatted nicely (e.g., SmartExposure, Focus, etc.)
                 if (!isStructuralContainer && obj is ISequenceContainer featureContainer)
                 {
-                    objectInfo.Add("Items", getSequenceRecursively(featureContainer));
+                    objectInfo.Add("Items", RetryOnConcurrentModification(() => getSequenceRecursively(featureContainer)));
                 }
 
                 // For all containers, include triggers and conditions
@@ -2552,8 +2767,8 @@ namespace TouchNStars.Server.Controllers
                     var seqContainer = obj as SequenceContainer;
                     if (seqContainer != null)
                     {
-                        objectInfo.Add("Triggers", getTriggers(seqContainer));
-                        objectInfo.Add("Conditions", getConditions(seqContainer));
+                        objectInfo.Add("Triggers", RetryOnConcurrentModification(() => getTriggers(seqContainer)));
+                        objectInfo.Add("Conditions", RetryOnConcurrentModification(() => getConditions(seqContainer)));
                     }
                 }
 
@@ -2600,6 +2815,10 @@ namespace TouchNStars.Server.Controllers
                     HttpContext.Response.StatusCode = 404;
                     return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 404, Type = "Error" };
                 }
+
+                var runningRejection = RejectIfRunning(obj);
+                if (runningRejection != null)
+                    return runningRejection;
 
                 try
                 {
@@ -2706,9 +2925,31 @@ namespace TouchNStars.Server.Controllers
                             throw new Exception($"Property '{finalPropName}' does not have a public setter (may be read-only)");
                         }
 
+                        // String properties backed by a list of valid values (e.g. SelectedMode + Modes)
+                        // silently accept anything - reject values outside that list instead.
+                        if (finalProp.PropertyType == typeof(string))
+                        {
+                            var options = FindOptionList(currentObj, finalProp);
+                            if (options != null && !options.Contains(value))
+                            {
+                                throw new Exception($"'{value}' is not a valid value for '{finalPropName}'. Valid values: {string.Join(", ", options)}");
+                            }
+                        }
+
                         // Convert and set the value
                         object convertedValue = ConvertValue(value, finalProp.PropertyType);
                         finalProp.SetValue(currentObj, convertedValue);
+
+                        // Some properties ignore the setter (e.g. values mirrored from the profile).
+                        // Read simple values back so the client learns that nothing changed.
+                        if (IsSimpleEditableType(finalProp.PropertyType))
+                        {
+                            var actual = finalProp.GetValue(currentObj);
+                            if (!SimpleValuesEqual(actual, convertedValue))
+                            {
+                                throw new Exception($"'{finalPropName}' did not accept the value, it is still '{actual}'");
+                            }
+                        }
 
                         // Manually raise PropertyChanged notification if the object supports it
                         // This handles properties that don't raise notifications themselves (NINA bug workaround)
@@ -2826,6 +3067,146 @@ namespace TouchNStars.Server.Controllers
         }
 
         /// <summary>
+        /// GET /api/sequence/fields?id= - Describes the directly editable properties of an item,
+        /// trigger or condition so a generic editor does not have to guess types from JSON values.
+        /// Each field: { Name, Type, Options?, ReadOnly }. Type is one of integer, number, boolean,
+        /// string, choice, guid, timespan, datetime. Complex properties are left out.
+        /// </summary>
+        [Route(HttpVerbs.Get, "/sequence/fields")]
+        public object GetEditableFields([QueryField] string id)
+        {
+            try
+            {
+                var obj = FindObjectById(id);
+                if (obj == null)
+                {
+                    HttpContext.Response.StatusCode = 404;
+                    return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 404, Type = "Error" };
+                }
+
+                var fields = Application.Current.Dispatcher.Invoke(() => DescribeEditableFields(obj));
+
+                HttpContext.Response.StatusCode = 200;
+                WriteSequenceResponseData(HttpContext, new Hashtable
+                {
+                    { "Success", true },
+                    { "Fields", fields }
+                });
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error describing sequence fields: {ex}");
+                HttpContext.Response.StatusCode = 500;
+                return new ApiResponse { Success = false, Error = ex.Message, StatusCode = 500, Type = "Error" };
+            }
+        }
+
+        private static List<Hashtable> DescribeEditableFields(object obj)
+        {
+            // Same property selection as the tree serializer: own public get/set properties only
+            Type baseType = obj is ISequenceTrigger ? typeof(SequenceTrigger)
+                : obj is ISequenceCondition ? typeof(SequenceCondition)
+                : typeof(SequenceItem);
+            var baseNames = new HashSet<string>(baseType.GetProperties().Select(p => p.Name));
+
+            var result = new List<Hashtable>();
+            foreach (var prop in obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (ignoredProperties.Contains(prop.Name) || baseNames.Contains(prop.Name)) continue;
+                if (prop.GetIndexParameters().Length > 0) continue;
+                if (!(prop.GetGetMethod()?.IsPublic ?? false) || !(prop.GetSetMethod()?.IsPublic ?? false)) continue;
+
+                var type = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+                string kind;
+                List<string> options = null;
+                if (type == typeof(bool)) kind = "boolean";
+                else if (type == typeof(int) || type == typeof(long) || type == typeof(short) || type == typeof(byte)) kind = "integer";
+                else if (type == typeof(double) || type == typeof(float) || type == typeof(decimal)) kind = "number";
+                else if (type == typeof(Guid)) kind = "guid";
+                else if (type == typeof(TimeSpan)) kind = "timespan";
+                else if (type == typeof(DateTime)) kind = "datetime";
+                else if (type.IsEnum)
+                {
+                    kind = "choice";
+                    options = Enum.GetNames(type).ToList();
+                }
+                else if (type == typeof(string))
+                {
+                    options = FindOptionList(obj, prop);
+                    kind = options != null ? "choice" : "string";
+                }
+                else continue;
+
+                var field = new Hashtable
+                {
+                    { "Name", prop.Name },
+                    { "Type", kind },
+                    { "ReadOnly", IsRuntimeStateProperty(prop.Name) }
+                };
+                if (options != null) field["Options"] = options;
+                result.Add(field);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Progress and state properties that are publicly settable but owned by the item while
+        /// it runs (counters, display text). Editing them only corrupts the item's bookkeeping.
+        /// </summary>
+        private static bool IsRuntimeStateProperty(string name)
+        {
+            return name.StartsWith("Completed") || name.StartsWith("Total") ||
+                   name.EndsWith("WasCompleted") || name == "DisplayText";
+        }
+
+        /// <summary>
+        /// Finds the list of valid values for a string property by the naming conventions NINA
+        /// and its plugins use: SelectedMode -> Modes, BinningMode -> BinningModeChoices, ...
+        /// </summary>
+        private static List<string> FindOptionList(object owner, PropertyInfo prop)
+        {
+            var baseName = prop.Name.StartsWith("Selected") && prop.Name.Length > 8 ? prop.Name.Substring(8) : prop.Name;
+            var candidates = new[]
+            {
+                baseName + "s", baseName + "Choices", baseName + "Options", baseName + "List",
+                "Available" + baseName + "s", prop.Name + "s", prop.Name + "Choices", prop.Name + "Options"
+            };
+            foreach (var name in candidates.Distinct())
+            {
+                if (name == prop.Name) continue;
+                var listProp = owner.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                if (listProp == null || listProp.GetIndexParameters().Length > 0) continue;
+                if (listProp.PropertyType == typeof(string) || !typeof(IEnumerable).IsAssignableFrom(listProp.PropertyType)) continue;
+                try
+                {
+                    if (listProp.GetValue(owner) is IEnumerable values)
+                    {
+                        var list = values.Cast<object>().Where(v => v != null).Select(v => v.ToString()).ToList();
+                        if (list.Count > 0) return list;
+                    }
+                }
+                catch { /* try the next candidate */ }
+            }
+            return null;
+        }
+
+        private static bool IsSimpleEditableType(Type type)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            return type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) ||
+                   type == typeof(TimeSpan) || type == typeof(DateTime) || type == typeof(Guid);
+        }
+
+        private static bool SimpleValuesEqual(object actual, object expected)
+        {
+            // NaN never compares equal to itself, but writing NaN back is not a rejection
+            if (actual is double a && expected is double e) return (double.IsNaN(a) && double.IsNaN(e)) || Math.Abs(a - e) < 1e-9;
+            if (actual is float af && expected is float ef) return (float.IsNaN(af) && float.IsNaN(ef)) || Math.Abs(af - ef) < 1e-6f;
+            return Equals(actual, expected);
+        }
+
+        /// <summary>
         /// Helper method to convert string value to proper type
         /// </summary>
         private object ConvertValue(string value, Type targetType)
@@ -2844,8 +3225,15 @@ namespace TouchNStars.Server.Controllers
                 if (targetType == typeof(int))
                     return int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
+                // NINA's UI rejects these through its validation rules; NaN or Infinity as an
+                // exposure time or position would be handed straight to the device drivers.
                 if (targetType == typeof(double))
-                    return double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                {
+                    var d = double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                    if (!double.IsFinite(d))
+                        throw new FormatException($"'{value}' is not a finite number");
+                    return d;
+                }
 
                 if (targetType == typeof(decimal))
                     return decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
@@ -2854,10 +3242,21 @@ namespace TouchNStars.Server.Controllers
                     return long.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
 
                 if (targetType == typeof(float))
-                    return float.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                {
+                    var f = float.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                    if (!float.IsFinite(f))
+                        throw new FormatException($"'{value}' is not a finite number");
+                    return f;
+                }
 
                 if (targetType.IsEnum)
-                    return Enum.Parse(targetType, value);
+                {
+                    // Enum.Parse also accepts any number ("999"), which no switch in NINA expects
+                    var parsed = Enum.Parse(targetType, value);
+                    if (!targetType.IsDefined(typeof(FlagsAttribute), false) && !Enum.IsDefined(targetType, parsed))
+                        throw new FormatException($"'{value}' is not a valid value. Valid values: {string.Join(", ", Enum.GetNames(targetType))}");
+                    return parsed;
+                }
 
                 if (targetType == typeof(TimeSpan))
                     return TimeSpan.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
@@ -3135,6 +3534,10 @@ namespace TouchNStars.Server.Controllers
                     return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 404, Type = "Error" };
                 }
 
+                var runningRejection = RejectIfRunning(obj);
+                if (runningRejection != null)
+                    return runningRejection;
+
                 try
                 {
                     Application.Current.Dispatcher.Invoke(() =>
@@ -3226,8 +3629,12 @@ namespace TouchNStars.Server.Controllers
                 if (obj == null)
                 {
                     HttpContext.Response.StatusCode = 404;
-                    return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 400, Type = "Error" };
+                    return new ApiResponse { Success = false, Error = "Object not found", StatusCode = 404, Type = "Error" };
                 }
+
+                var runningRejection = RejectIfRunning(obj);
+                if (runningRejection != null)
+                    return runningRejection;
 
                 try
                 {
@@ -3379,9 +3786,29 @@ namespace TouchNStars.Server.Controllers
                         return new ApiResponse { Success = false, Error = "No sequence loaded", StatusCode = 400, Type = "Error" };
                     }
 
+                    if (sequenceMediator.IsAdvancedSequenceRunning())
+                    {
+                        HttpContext.Response.StatusCode = 409;
+                        return new ApiResponse { Success = false, Error = "Cannot clear the sequence while it is running", StatusCode = 409, Type = "Error" };
+                    }
+
+                    var factory = GetFactory();
+                    if (factory == null)
+                    {
+                        HttpContext.Response.StatusCode = 503;
+                        return new ApiResponse { Success = false, Error = "Unable to access sequence factory", StatusCode = 503, Type = "Error" };
+                    }
+
+                    // The root container's DetachCommand asks for confirmation in a NINA message box,
+                    // which blocks this request on Windows until someone clicks it at the PC.
+                    // Load a fresh empty sequence instead.
                     Application.Current.Dispatcher.Invoke(() =>
                     {
-                        mainContainer.DetachCommand?.Execute(null);
+                        var root = factory.GetContainer<SequenceRootContainer>();
+                        root.Add(factory.GetContainer<StartAreaContainer>());
+                        root.Add(factory.GetContainer<TargetAreaContainer>());
+                        root.Add(factory.GetContainer<EndAreaContainer>());
+                        sequenceMediator.SetAdvancedSequence(root);
                     });
 
                     ResetIdCounterAndMap();
@@ -3826,6 +4253,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private static string GenerateId()
         {
+            // Only called while idLock is held
             return $"id_{++idCounter}";
         }
 
@@ -3834,29 +4262,113 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private static string GetOrCreateId(object obj, ObjectType type)
         {
-            // Search for existing ID of this object in the map
-            foreach (var kvp in objectIdMap)
+            lock (idLock)
             {
-                if (kvp.Value.Value == obj && kvp.Value.Type == type)
-                {
-                    return kvp.Key;
-                }
-            }
+                if (idByObject.TryGetValue(obj, out var existingId))
+                    return existingId;
 
-            // If not found, generate new ID and track it
-            string newId = GenerateId();
-            objectIdMap[newId] = new TrackedObject { Value = obj, Type = type };
-            return newId;
+                string newId = GenerateId();
+                objectIdMap[newId] = new TrackedObject { Value = obj, Type = type, Seq = idCounter };
+                idByObject[obj] = newId;
+                return newId;
+            }
         }
 
         /// <summary>
-        /// Reset ID counter and map - call when a new sequence is loaded or cleared
+        /// Remove an ID (and its reverse entry) from the registry
+        /// </summary>
+        private static void UntrackId(string id)
+        {
+            if (string.IsNullOrEmpty(id))
+                return;
+            lock (idLock)
+            {
+                if (objectIdMap.Remove(id, out var tracked))
+                    idByObject.Remove(tracked.Value);
+            }
+        }
+
+        /// <summary>
+        /// Remove an object from the registry, if it is tracked
+        /// </summary>
+        private static void UntrackObject(object obj)
+        {
+            lock (idLock)
+            {
+                if (idByObject.Remove(obj, out var id))
+                    objectIdMap.Remove(id);
+            }
+        }
+
+        private static bool TryGetTracked(string id, out TrackedObject tracked)
+        {
+            tracked = null;
+            if (string.IsNullOrEmpty(id))
+                return false;
+            lock (idLock)
+            {
+                return objectIdMap.TryGetValue(id, out tracked);
+            }
+        }
+
+        /// <summary>
+        /// Reset the ID map - call when a new sequence is loaded or cleared.
+        /// The counter keeps running on purpose: a client still holding an old ID must get a
+        /// "not found" instead of silently hitting an object of the new sequence.
         /// </summary>
         private static void ResetIdCounterAndMap()
         {
-            objectIdMap.Clear();
-            idCounter = 0;
-            lastLoadedSequence = null;
+            lock (idLock)
+            {
+                objectIdMap.Clear();
+                idByObject.Clear();
+                lastLoadedSequence = null;
+            }
+        }
+
+        /// <summary>
+        /// Drops all IDs when NINA switched to a different root container (e.g. a sequence loaded
+        /// from the NINA UI instead of through this API), so stale objects are not kept alive.
+        /// </summary>
+        private static void EnsureIdScope(ISequenceRootContainer root)
+        {
+            lock (idLock)
+            {
+                if (ReferenceEquals(lastLoadedSequence, root))
+                    return;
+                objectIdMap.Clear();
+                idByObject.Clear();
+                lastLoadedSequence = root;
+            }
+        }
+
+        private static long CurrentIdSeq()
+        {
+            lock (idLock)
+            {
+                return idCounter;
+            }
+        }
+
+        /// <summary>
+        /// Drops every ID whose object was not seen in a complete walk of the tree. Items removed
+        /// by NINA or by plugins like Target Scheduler would otherwise stay referenced (and in
+        /// memory) all night long. IDs handed out after the walk started are kept, since their
+        /// objects may have been added while it ran.
+        /// </summary>
+        private static void PruneRegistry(HashSet<object> seen, long walkStartSeq)
+        {
+            lock (idLock)
+            {
+                var stale = objectIdMap
+                    .Where(kv => kv.Value.Seq <= walkStartSeq && !seen.Contains(kv.Value.Value))
+                    .ToList();
+                foreach (var kv in stale)
+                {
+                    objectIdMap.Remove(kv.Key);
+                    idByObject.Remove(kv.Value.Value);
+                }
+            }
         }
 
         /// <summary>
@@ -3906,17 +4418,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private string TrackItem(ISequenceItem item)
         {
-            // Check if this item is already tracked
-            foreach (var kvp in objectIdMap)
-            {
-                if (kvp.Value.Type == ObjectType.Item && ReferenceEquals(kvp.Value.Value, item))
-                    return kvp.Key;  // Return existing ID
-            }
-
-            // Not found, generate new ID
-            var id = GenerateId();
-            objectIdMap[id] = new TrackedObject { Value = item, Type = ObjectType.Item };
-            return id;
+            return GetOrCreateId(item, ObjectType.Item);
         }
 
         /// <summary>
@@ -3959,11 +4461,7 @@ namespace TouchNStars.Server.Controllers
         private void UntrackItemRecursive(ISequenceItem item)
         {
             // Untrack the item itself
-            var itemId = objectIdMap.FirstOrDefault(kv => kv.Value.Value == item).Key;
-            if (!string.IsNullOrEmpty(itemId))
-            {
-                objectIdMap.Remove(itemId);
-            }
+            UntrackObject(item);
 
             if (item is ISequenceContainer container)
             {
@@ -3979,20 +4477,12 @@ namespace TouchNStars.Server.Controllers
                 {
                     foreach (var trigger in seqContainer.Triggers)
                     {
-                        var triggerId = objectIdMap.FirstOrDefault(kv => kv.Value.Value == trigger).Key;
-                        if (!string.IsNullOrEmpty(triggerId))
-                        {
-                            objectIdMap.Remove(triggerId);
-                        }
+                        UntrackObject(trigger);
                     }
 
                     foreach (var condition in seqContainer.Conditions)
                     {
-                        var conditionId = objectIdMap.FirstOrDefault(kv => kv.Value.Value == condition).Key;
-                        if (!string.IsNullOrEmpty(conditionId))
-                        {
-                            objectIdMap.Remove(conditionId);
-                        }
+                        UntrackObject(condition);
                     }
                 }
             }
@@ -4003,17 +4493,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private string TrackTrigger(ISequenceTrigger trigger)
         {
-            // Check if this trigger is already tracked
-            foreach (var kvp in objectIdMap)
-            {
-                if (kvp.Value.Type == ObjectType.Trigger && ReferenceEquals(kvp.Value.Value, trigger))
-                    return kvp.Key;  // Return existing ID
-            }
-
-            // Not found, generate new ID
-            var id = GenerateId();
-            objectIdMap[id] = new TrackedObject { Value = trigger, Type = ObjectType.Trigger };
-            return id;
+            return GetOrCreateId(trigger, ObjectType.Trigger);
         }
 
         /// <summary>
@@ -4021,17 +4501,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private string TrackCondition(ISequenceCondition condition)
         {
-            // Check if this condition is already tracked
-            foreach (var kvp in objectIdMap)
-            {
-                if (kvp.Value.Type == ObjectType.Condition && ReferenceEquals(kvp.Value.Value, condition))
-                    return kvp.Key;  // Return existing ID
-            }
-
-            // Not found, generate new ID
-            var id = GenerateId();
-            objectIdMap[id] = new TrackedObject { Value = condition, Type = ObjectType.Condition };
-            return id;
+            return GetOrCreateId(condition, ObjectType.Condition);
         }
 
         /// <summary>
@@ -4039,7 +4509,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private ISequenceItem FindItemById(string id)
         {
-            return objectIdMap.TryGetValue(id, out var tracked) && tracked.Type == ObjectType.Item
+            return TryGetTracked(id, out var tracked) && tracked.Type == ObjectType.Item
                 ? tracked.Value as ISequenceItem
                 : null;
         }
@@ -4049,7 +4519,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private ObjectType? GetObjectType(string id)
         {
-            return objectIdMap.TryGetValue(id, out var tracked) ? tracked.Type : null;
+            return TryGetTracked(id, out var tracked) ? tracked.Type : null;
         }
 
         /// <summary>
@@ -4057,7 +4527,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private object FindObjectById(string id)
         {
-            return objectIdMap.TryGetValue(id, out var tracked) ? tracked.Value : null;
+            return TryGetTracked(id, out var tracked) ? tracked.Value : null;
         }
 
         /// <summary>
@@ -4216,37 +4686,38 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private void ResetItemAndSubsequent(ISequenceItem item, ISequenceRootContainer rootContainer)
         {
-            // Use the proper ResetAll() method if available (containers) or ResetProgress() for items
-            // This ensures all internal state is properly reset, including loop conditions' CompletedIterations
-            if (item is ISequenceContainer container)
-            {
-                container.ResetAll();
-            }
-            else
-            {
-                item.ResetProgress();
-            }
+            // Runs on the UI thread. Every item is reset exactly once: a recursive call per
+            // following sibling would reset each of them again for every predecessor, which is
+            // 2^n resets and freezes NINA for a container with a few dozen instructions.
+            ResetSingleItem(item);
 
             // Cascade the reset up to parent containers (matches WPF behavior)
             item.ResetProgressCascaded();
 
-            // Find the parent container and reset all items after this one
             ISequenceContainer parentContainer = null;
             FindItemContainer(rootContainer, item, ref parentContainer);
+            if (parentContainer == null)
+                return;
 
-            if (parentContainer != null)
+            var siblings = parentContainer.Items.ToArray();
+            var itemIndex = Array.IndexOf(siblings, item);
+            for (int i = itemIndex + 1; itemIndex >= 0 && i < siblings.Length; i++)
             {
-                var itemIndex = parentContainer.Items.IndexOf(item);
-                if (itemIndex >= 0)
-                {
-                    // Reset all subsequent items
-                    for (int i = itemIndex + 1; i < parentContainer.Items.Count; i++)
-                    {
-                        var subsequentItem = parentContainer.Items[i];
-                        ResetItemAndSubsequent(subsequentItem, rootContainer);
-                    }
-                }
+                // A following sibling can be the one the sequencer executes right now (the reset
+                // item finished before it) - leave it and its loop counters alone.
+                if (IsRunning(siblings[i]))
+                    continue;
+                ResetSingleItem(siblings[i]);
             }
+        }
+
+        private static void ResetSingleItem(ISequenceItem item)
+        {
+            // ResetAll() also resets triggers, conditions and loop counters of containers
+            if (item is ISequenceContainer container)
+                container.ResetAll();
+            else
+                item.ResetProgress();
         }
 
         /// <summary>
@@ -4317,11 +4788,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private void UntrackTrigger(ISequenceTrigger trigger)
         {
-            var triggerId = objectIdMap.FirstOrDefault(kv => kv.Value.Value == trigger).Key;
-            if (!string.IsNullOrEmpty(triggerId))
-            {
-                objectIdMap.Remove(triggerId);
-            }
+            UntrackObject(trigger);
         }
 
         /// <summary>
@@ -4329,11 +4796,7 @@ namespace TouchNStars.Server.Controllers
         /// </summary>
         private void UntrackCondition(ISequenceCondition condition)
         {
-            var conditionId = objectIdMap.FirstOrDefault(kv => kv.Value.Value == condition).Key;
-            if (!string.IsNullOrEmpty(conditionId))
-            {
-                objectIdMap.Remove(conditionId);
-            }
+            UntrackObject(condition);
         }
 
         /// <summary>
@@ -4639,7 +5102,9 @@ namespace TouchNStars.Server.Controllers
 
                     result.Add(it);
                 }
-                catch (Exception ex)
+                // A concurrent change of a nested collection must reach RetryOnConcurrentModification;
+                // swallowing it here would silently drop the whole subtree from the response.
+                catch (Exception ex) when (ex is not InvalidOperationException)
                 {
                     Logger.Error(ex);
                 }
