@@ -330,6 +330,23 @@ public class HipsSurveyServiceTests
     }
 
     [Fact]
+    public void NsnsSingleLineProducts_AreSeparateSurveysWithTheirOwnSourceAndFolder()
+    {
+        Assert.Same(SurveyDefinition.NsnsHalpha, SurveyDefinition.Find("nsns-ha"));
+        Assert.Same(SurveyDefinition.NsnsOiii, SurveyDefinition.Find("nsns-oiii"));
+        Assert.Same(SurveyDefinition.NsnsSii, SurveyDefinition.Find("nsns-sii"));
+        Assert.Equal("https://www.simg.de/nebulae3/dr0_2/halpha8", SurveyDefinition.NsnsHalpha.DefaultSourceUrls[0]);
+        Assert.Equal("/celestia-atlas-data/surveys/nsns-oiii", SurveyDefinition.NsnsOiii.Route);
+        Assert.Equal("TNS_NSNS_SII_SURVEY_SOURCE_URL", SurveyDefinition.NsnsSii.SourceUrlEnvironmentVariable);
+        Assert.Equal(SurveyDefinition.All.Count, SurveyDefinition.All.Select(d => d.Id).Distinct().Count());
+        Assert.Equal(SurveyDefinition.All.Count, HipsSurveyService.All.Count);
+
+        string properties = HipsSurveyService.BuildPropertiesFile(SurveyDefinition.NsnsHalpha, 6, "https://example.org", DateTime.UtcNow);
+        Assert.Contains("creator_did          = ivo://simg.de/P/NSNS/DR0_2/halpha8\n", properties);
+        Assert.Contains("hips_service_url     = /celestia-atlas-data/surveys/nsns-ha\n", properties);
+    }
+
+    [Fact]
     public void NsnsStatus_WithoutCoverageMap_UsesExpectedCountsAndIsNotInstalled()
     {
         using TempSurvey survey = new();
