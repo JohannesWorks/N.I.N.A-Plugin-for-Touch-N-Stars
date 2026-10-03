@@ -30,7 +30,6 @@ namespace TouchNStars.Server {
             string webAppDir = Path.Combine(assemblyFolder, "app");
             string userLandscapesDir =
                 StellariumLandscapeService.ResolvePersistentLandscapesRoot(createIfMissing: true);
-            string dssSurveyDir = DssSurveyService.ResolvePersistentSurveyRoot(createIfMissing: true);
 
             // Suppress EmbedIO verbose logging by unregistering the logger
             try { Swan.Logging.Logger.UnregisterLogger<Swan.Logging.ConsoleLogger>(); } catch { }
@@ -75,7 +74,7 @@ namespace TouchNStars.Server {
                 .WithController<FilesystemController>()
                 .WithController<FitsAnalysisController>()
                 .WithController<StellariumLandscapeController>()
-                .WithController<DssSurveyController>()   // Atlas DSS survey download
+                .WithController<HipsSurveyController>()  // Atlas survey downloads (DSS, NSNS)
                 .WithController<NightSummaryController>()
                 .WithController<GroundStationController>());
             WebServer = WebServer.WithModule(new MountControlSocket("/ws/mount-control")); // Manual (press-hold) mount slewing, INDI-direct
@@ -83,9 +82,12 @@ namespace TouchNStars.Server {
                 StellariumLandscapeService.UserLandscapesRoute,
                 userLandscapesDir,
                 false);
-            // The DSS survey is downloaded on demand into the persistent data directory and
-            // served from there; the app bundle no longer ships any survey tiles.
-            WebServer = WebServer.WithStaticFolder(DssSurveyService.SurveyRoute, dssSurveyDir, false);
+            // The Atlas surveys are downloaded on demand into the persistent data directory and
+            // served from there; the app bundle does not ship any survey tiles.
+            foreach (SurveyDefinition survey in SurveyDefinition.All) {
+                string surveyDir = HipsSurveyService.ResolvePersistentSurveyRoot(survey, createIfMissing: true);
+                WebServer = WebServer.WithStaticFolder(survey.Route, surveyDir, false);
+            }
             WebServer = WebServer.WithStaticFolder("/", webAppDir, false); // Register the static folder, which will be used to serve the web app
         }
 
@@ -113,7 +115,9 @@ namespace TouchNStars.Server {
             try {
                 FlatTargetNameService.Stop();
                 apiToken?.Cancel();
-                DssSurveyService.Instance.CancelDownload();
+                foreach (HipsSurveyService survey in HipsSurveyService.All) {
+                    survey.CancelDownload();
+                }
                 WebServer?.Dispose();
                 WebServer = null;
                 BackgroundWorker.Cleanup();

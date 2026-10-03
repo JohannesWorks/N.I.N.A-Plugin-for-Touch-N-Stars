@@ -9,6 +9,7 @@
 - Package and serve the `celestia-atlas-data` application directory.
 - Keep generated Celestia Atlas landscapes in persistent N.I.N.A. user data and
   migrate existing app-local landscapes without overwriting user content.
+- Atlas NSNS narrowband survey (ohs8, CC BY-NC-SA 4.0): the survey endpoints take an optional `survey` (`dss` default, `nsns`); NSNS tiles inside its Moc.fits coverage are fetched from simg.de, stored as JPEG q85 and served at `/celestia-atlas-data/surveys/nsns`; only one survey download runs at a time
 
 ## 1.4.0.1
 - fix(filesystem-preview): read the Bayer pattern from the file header, so OSC FITS/XISF frames offer the debayer option and render with their actual pattern
