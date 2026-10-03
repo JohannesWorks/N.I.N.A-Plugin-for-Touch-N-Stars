@@ -1,0 +1,147 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace TouchNStars.Server.Services;
+
+/// <summary>
+/// Everything that differs between the downloadable Atlas HiPS surveys: where the tiles come
+/// from, which orders are offered, the source tile format and what the served
+/// <c>properties</c> file says about provenance and licence.
+/// </summary>
+public sealed class SurveyDefinition
+{
+    public const string RouteBase = "/celestia-atlas-data/surveys/";
+
+    /// <summary>
+    /// DSS colour (CDS/P/DSS2/color). STScI publishes an official mirror of the identical CDS
+    /// HiPS (same creator_did and release) on S3; it answers in well under a second where the
+    /// CDS community server took 20-100 s per tile when measured, so the mirror goes first.
+    /// Average source JPEG bytes per tile: means of 60 random tiles per order sampled from the
+    /// STScI mirror on 2026-09-14 (the app carries the same table in offlineSkySurvey.js).
+    /// </summary>
+    public static readonly SurveyDefinition Dss = new()
+    {
+        Id = "dss",
+        MinOrder = 3,
+        BaseOrder = 4,
+        MaxOrder = 7,
+        SourceExtension = ".jpg",
+        ConvertToJpeg = false,
+        HasLegacyWebp = true,
+        DefaultSourceUrls = new[]
+        {
+            "https://stpubdata.s3.us-east-1.amazonaws.com/mast/skybackgrounds/DSSColor",
+            "https://alasky.cds.unistra.fr/DSS/DSSColor"
+        },
+        AverageTileBytes = new Dictionary<int, long>
+        {
+            [3] = 42_000,
+            [4] = 55_000,
+            [5] = 75_000,
+            [6] = 93_000,
+            [7] = 97_000
+        },
+        PropertiesHeader =
+            "creator_did          = ivo://CDS/P/DSS2/color\n" +
+            "obs_collection       = DSS colored\n" +
+            "obs_title            = DSS colored\n" +
+            "obs_copyright        = Digitized Sky Survey - STScI/NASA, Colored & Healpixed by CDS\n" +
+            "obs_copyright_url    = http://archive.stsci.edu/dss/copyright.html\n" +
+            "hips_copyright       = CNRS/Unistra\n" +
+            "hips_creator         = CDS (A.Oberto, P.Fernique)\n",
+        PropertiesFooter =
+            "moc_sky_fraction     = 1\n" +
+            "prov_progenitor      = STScI\n" +
+            "obs_ack              = The Digitized Sky Surveys were produced at the Space Telescope Science Institute under U.S. Government grant NAG W-2166. The images of these surveys are based on photographic data obtained using the Oschin Schmidt Telescope on Palomar Mountain and the UK Schmidt Telescope. The plates were processed into the present compressed digital form with the permission of these institutions.\n"
+    };
+
+    /// <summary>
+    /// Northern Sky Narrowband Survey DR0.2, false-colour product ohs8 ([OIII] red, H-alpha
+    /// green, [SII] blue) by Stefan Ziegenbalg, CC BY-NC-SA 4.0. It covers the sky north of
+    /// Dec -16 deg only, so the tile set comes from the survey's Moc.fits. The master on
+    /// simg.de answered in ~0.3 s per tile on 2026-10-03, the CDS mirror in 10-20 s.
+    /// Source tiles are ~610 kB RGBA PNGs and are stored as JPEG q85; the sizes below are
+    /// means of 40 random converted tiles per order measured on 2026-10-03.
+    /// </summary>
+    public static readonly SurveyDefinition Nsns = new()
+    {
+        Id = "nsns",
+        MinOrder = 3,
+        BaseOrder = 4,
+        MaxOrder = 6,
+        SourceExtension = ".png",
+        ConvertToJpeg = true,
+        UsesCoverageMoc = true,
+        DefaultSourceUrls = new[]
+        {
+            "https://www.simg.de/nebulae3/dr0_2/ohs8",
+            "https://alasky.cds.unistra.fr/simg.de/simg.de_P_NSNS_DR0_2_ohs8"
+        },
+        AverageTileBytes = new Dictionary<int, long>
+        {
+            [3] = 68_000,
+            [4] = 78_000,
+            [5] = 92_000,
+            [6] = 81_000
+        },
+        // Tile counts of the DR0.2 coverage, used for estimates until Moc.fits is on disk.
+        ExpectedTileCounts = new Dictionary<int, int>
+        {
+            [3] = 528,
+            [4] = 2016,
+            [5] = 8000,
+            [6] = 31872
+        },
+        PropertiesHeader =
+            "creator_did          = ivo://simg.de/P/NSNS/DR0_2/ohs8\n" +
+            "obs_collection       = Northern Sky Narrowband Survey\n" +
+            "obs_title            = NSNS DR0.2: [OIII], H-alpha and [SII]\n" +
+            "obs_copyright        = Northern Sky Narrowband Survey by Stefan Ziegenbalg. The material can be freely used and distributed under Creative Commons Attribution-Noncommercial-Share Alike 4.0 license (CC-BY-NC-SA). Converted to JPEG by Touch-N-Stars.\n" +
+            "obs_copyright_url    = http://www.simg.de/nebulae3/dr0_2\n" +
+            "hips_creator         = S. Ziegenbalg\n",
+        PropertiesFooter =
+            "moc_sky_fraction     = 0.6484\n" +
+            "bib_reference_url    = https://doi.org/10.3847/2515-5172/adfec7\n"
+    };
+
+    public static readonly IReadOnlyList<SurveyDefinition> All = new[] { Dss, Nsns };
+
+    public string Id { get; init; }
+    public string FolderName => Id;
+    public string Route => RouteBase + Id;
+    public int MinOrder { get; init; }
+    public int BaseOrder { get; init; }
+    public int MaxOrder { get; init; }
+
+    /// <summary>Extension of the tiles on the source server (".jpg" or ".png").</summary>
+    public string SourceExtension { get; init; }
+
+    /// <summary>Re-encode source tiles to JPEG instead of storing them unchanged.</summary>
+    public bool ConvertToJpeg { get; init; }
+
+    /// <summary>Only the tiles listed in the source's Moc.fits exist.</summary>
+    public bool UsesCoverageMoc { get; init; }
+
+    /// <summary>A plugin version once stored this survey as WebP; those files are cleaned up.</summary>
+    public bool HasLegacyWebp { get; init; }
+
+    public string[] DefaultSourceUrls { get; init; }
+    public IReadOnlyDictionary<int, long> AverageTileBytes { get; init; }
+    public IReadOnlyDictionary<int, int> ExpectedTileCounts { get; init; }
+    public string PropertiesHeader { get; init; }
+    public string PropertiesFooter { get; init; }
+
+    public string PathEnvironmentVariable => $"TNS_{Id.ToUpperInvariant()}_SURVEY_PATH";
+    public string SourceUrlEnvironmentVariable => $"TNS_{Id.ToUpperInvariant()}_SURVEY_SOURCE_URL";
+
+    public static SurveyDefinition Find(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return Dss;
+        }
+
+        return All.FirstOrDefault(d => string.Equals(d.Id, id.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+}
