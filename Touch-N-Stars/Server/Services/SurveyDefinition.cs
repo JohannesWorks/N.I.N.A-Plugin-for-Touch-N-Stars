@@ -57,55 +57,76 @@ public sealed class SurveyDefinition
     };
 
     /// <summary>
-    /// Northern Sky Narrowband Survey DR0.2, false-colour product ohs8 ([OIII] red, H-alpha
-    /// green, [SII] blue) by Stefan Ziegenbalg, CC BY-NC-SA 4.0. It covers the sky north of
-    /// Dec -16 deg only, so the tile set comes from the survey's Moc.fits. The master on
-    /// simg.de answered in ~0.3 s per tile on 2026-10-03, the CDS mirror in 10-20 s.
-    /// Source tiles are ~610 kB RGBA PNGs and are stored as JPEG q85; the sizes below are
-    /// means of 40 random converted tiles per order measured on 2026-10-03.
+    /// Northern Sky Narrowband Survey DR0.2 by Stefan Ziegenbalg, CC BY-NC-SA 4.0. It covers
+    /// the sky north of Dec -16 deg only, so the tile set comes from each product's Moc.fits.
+    /// The master on simg.de answered in ~0.3 s per tile on 2026-10-03, the CDS mirror in
+    /// 10-20 s. Source tiles are 8-bit PNGs (~120-610 kB) and are stored as JPEG q85; the
+    /// sizes are means of 25-40 random converted tiles per order measured on 2026-10-03.
     /// </summary>
-    public static readonly SurveyDefinition Nsns = new()
-    {
-        Id = "nsns",
-        MinOrder = 3,
-        BaseOrder = 4,
-        MaxOrder = 6,
-        SourceExtension = ".png",
-        ConvertToJpeg = true,
-        UsesCoverageMoc = true,
-        DefaultSourceUrls = new[]
-        {
-            "https://www.simg.de/nebulae3/dr0_2/ohs8",
-            "https://alasky.cds.unistra.fr/simg.de/simg.de_P_NSNS_DR0_2_ohs8"
-        },
-        AverageTileBytes = new Dictionary<int, long>
-        {
-            [3] = 68_000,
-            [4] = 78_000,
-            [5] = 92_000,
-            [6] = 81_000
-        },
-        // Tile counts of the DR0.2 coverage, used for estimates until Moc.fits is on disk.
-        ExpectedTileCounts = new Dictionary<int, int>
-        {
-            [3] = 528,
-            [4] = 2016,
-            [5] = 8000,
-            [6] = 31872
-        },
-        PropertiesHeader =
-            "creator_did          = ivo://simg.de/P/NSNS/DR0_2/ohs8\n" +
-            "obs_collection       = Northern Sky Narrowband Survey\n" +
-            "obs_title            = NSNS DR0.2: [OIII], H-alpha and [SII]\n" +
-            "obs_copyright        = Northern Sky Narrowband Survey by Stefan Ziegenbalg. The material can be freely used and distributed under Creative Commons Attribution-Noncommercial-Share Alike 4.0 license (CC-BY-NC-SA). Converted to JPEG by Touch-N-Stars.\n" +
-            "obs_copyright_url    = http://www.simg.de/nebulae3/dr0_2\n" +
-            "hips_creator         = S. Ziegenbalg\n",
-        PropertiesFooter =
-            "moc_sky_fraction     = 0.6484\n" +
-            "bib_reference_url    = https://doi.org/10.3847/2515-5172/adfec7\n"
-    };
+    public static readonly SurveyDefinition Nsns = CreateNsns(
+        "nsns",
+        "ohs8",
+        "NSNS DR0.2: [OIII], H-alpha and [SII]",
+        new Dictionary<int, long> { [3] = 68_000, [4] = 78_000, [5] = 92_000, [6] = 81_000 });
 
-    public static readonly IReadOnlyList<SurveyDefinition> All = new[] { Dss, Nsns };
+    public static readonly SurveyDefinition NsnsHalpha = CreateNsns(
+        "nsns-ha",
+        "halpha8",
+        "NSNS DR0.2: H-alpha (8 bit)",
+        new Dictionary<int, long> { [3] = 37_000, [4] = 53_000, [5] = 58_000, [6] = 50_000 });
+
+    public static readonly SurveyDefinition NsnsOiii = CreateNsns(
+        "nsns-oiii",
+        "oiii8",
+        "NSNS DR0.2: [OIII] (8 bit)",
+        new Dictionary<int, long> { [3] = 61_000, [4] = 79_000, [5] = 78_000, [6] = 65_000 });
+
+    public static readonly SurveyDefinition NsnsSii = CreateNsns(
+        "nsns-sii",
+        "sii8",
+        "NSNS DR0.2: [SII] (8 bit)",
+        new Dictionary<int, long> { [3] = 79_000, [4] = 98_000, [5] = 95_000, [6] = 74_000 });
+
+    private static SurveyDefinition CreateNsns(string id, string product, string title, Dictionary<int, long> averageTileBytes)
+    {
+        return new SurveyDefinition
+        {
+            Id = id,
+            MinOrder = 3,
+            BaseOrder = 4,
+            MaxOrder = 6,
+            SourceExtension = ".png",
+            ConvertToJpeg = true,
+            UsesCoverageMoc = true,
+            DefaultSourceUrls = new[]
+            {
+                $"https://www.simg.de/nebulae3/dr0_2/{product}",
+                $"https://alasky.cds.unistra.fr/simg.de/simg.de_P_NSNS_DR0_2_{product}"
+            },
+            AverageTileBytes = averageTileBytes,
+            // Tile counts of the DR0.2 coverage (identical for all products), used for
+            // estimates until Moc.fits is on disk.
+            ExpectedTileCounts = new Dictionary<int, int>
+            {
+                [3] = 528,
+                [4] = 2016,
+                [5] = 8000,
+                [6] = 31872
+            },
+            PropertiesHeader =
+                $"creator_did          = ivo://simg.de/P/NSNS/DR0_2/{product}\n" +
+                "obs_collection       = Northern Sky Narrowband Survey\n" +
+                $"obs_title            = {title}\n" +
+                "obs_copyright        = Northern Sky Narrowband Survey by Stefan Ziegenbalg. The material can be freely used and distributed under Creative Commons Attribution-Noncommercial-Share Alike 4.0 license (CC-BY-NC-SA). Converted to JPEG by Touch-N-Stars.\n" +
+                "obs_copyright_url    = http://www.simg.de/nebulae3/dr0_2\n" +
+                "hips_creator         = S. Ziegenbalg\n",
+            PropertiesFooter =
+                "moc_sky_fraction     = 0.6464\n" +
+                "bib_reference_url    = https://doi.org/10.3847/2515-5172/adfec7\n"
+        };
+    }
+
+    public static readonly IReadOnlyList<SurveyDefinition> All = new[] { Dss, Nsns, NsnsHalpha, NsnsOiii, NsnsSii };
 
     public string Id { get; init; }
     public string FolderName => Id;
@@ -132,8 +153,11 @@ public sealed class SurveyDefinition
     public string PropertiesHeader { get; init; }
     public string PropertiesFooter { get; init; }
 
-    public string PathEnvironmentVariable => $"TNS_{Id.ToUpperInvariant()}_SURVEY_PATH";
-    public string SourceUrlEnvironmentVariable => $"TNS_{Id.ToUpperInvariant()}_SURVEY_SOURCE_URL";
+    public string PathEnvironmentVariable => $"TNS_{EnvironmentName}_SURVEY_PATH";
+    public string SourceUrlEnvironmentVariable => $"TNS_{EnvironmentName}_SURVEY_SOURCE_URL";
+
+    // Environment variable names cannot carry the hyphen of ids like "nsns-ha".
+    private string EnvironmentName => Id.ToUpperInvariant().Replace('-', '_');
 
     public static SurveyDefinition Find(string id)
     {

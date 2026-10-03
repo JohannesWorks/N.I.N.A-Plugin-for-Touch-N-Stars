@@ -18,10 +18,10 @@ namespace TouchNStars.Server.Services;
 
 /// <summary>
 /// Downloads an Atlas HiPS survey (see <see cref="SurveyDefinition"/>: DSS colour, NSNS
-/// narrowband) tile by tile into the persistent Celestia Atlas data directory and keeps the
+/// narrowband colour and single lines) tile by tile into the persistent Celestia Atlas data directory and keeps the
 /// served survey consistent with what is actually on disk. DSS tiles are stored as the
 /// source JPEGs, unchanged: re-encoding to WebP cost ~1.3 s per tile on a PINS host and
-/// made the download CPU-bound. NSNS ships ~610 kB PNGs, which are re-encoded to JPEG q85.
+/// made the download CPU-bound. NSNS ships 8-bit PNGs (up to ~610 kB), which are re-encoded to JPEG q85.
 ///
 /// Only one download job runs at a time across all surveys and its state lives in memory;
 /// everything else (installed order, disk usage, resume position) is reconstructed from the
@@ -48,15 +48,14 @@ public sealed class HipsSurveyService
     private static readonly JpegEncoder JpegQuality85 = new() { Quality = 85 };
 
     private static readonly HttpClient Http = CreateHttpClient();
-    private static readonly Lazy<HipsSurveyService> LazyDss = new(() => new HipsSurveyService(SurveyDefinition.Dss));
-    private static readonly Lazy<HipsSurveyService> LazyNsns = new(() => new HipsSurveyService(SurveyDefinition.Nsns));
+    private static readonly Lazy<IReadOnlyList<HipsSurveyService>> LazyAll =
+        new(() => SurveyDefinition.All.Select(d => new HipsSurveyService(d)).ToArray());
 
     // Guards the "one job across all surveys" rule; the job itself is per instance.
     private static readonly object StartGate = new();
 
-    public static HipsSurveyService Dss => LazyDss.Value;
-    public static HipsSurveyService Nsns => LazyNsns.Value;
-    public static IReadOnlyList<HipsSurveyService> All => new[] { Dss, Nsns };
+    /// <summary>One shared service per <see cref="SurveyDefinition.All"/> entry.</summary>
+    public static IReadOnlyList<HipsSurveyService> All => LazyAll.Value;
 
     /// <summary>The service for a survey id; null/empty means DSS, unknown ids return null.</summary>
     public static HipsSurveyService ForId(string id)
