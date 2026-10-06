@@ -4242,8 +4242,8 @@ namespace TouchNStars.Server.Controllers
             if (container is SequenceContainer seqContainer && seqContainer.Triggers.Contains(trigger))
             {
                 UntrackTrigger(trigger);
-                seqContainer.Triggers.Remove(trigger);
-                return true;
+                // NINA's Remove detaches the parent so the trigger stops acting on the container
+                return seqContainer.Remove(trigger);
             }
 
             // Recursively search in child items
@@ -4271,8 +4271,8 @@ namespace TouchNStars.Server.Controllers
             if (container is SequenceContainer seqContainer && seqContainer.Conditions.Contains(condition))
             {
                 UntrackCondition(condition);
-                seqContainer.Conditions.Remove(condition);
-                return true;
+                // NINA's Remove detaches the parent, which stops the condition's watchdog
+                return seqContainer.Remove(condition);
             }
 
             // Recursively search in child items
