@@ -2,6 +2,9 @@
 
 ## ## 1.6.0.0 
 - Atlas NSNS narrowband survey (CC BY-NC-SA 4.0): the survey endpoints take an optional `survey` (`dss` default, `nsns` colour composite ohs8, `nsns-ha`, `nsns-oiii`, `nsns-sii` single lines); NSNS tiles inside its Moc.fits coverage are fetched from simg.de, stored as JPEG q85 and served at `/celestia-atlas-data/surveys/nsns`; only one survey download runs at a time
+- Sequencer API (`/api/sequence/*`): the SequenceController now runs on NINA and exposes the sequence as a tree — catalogue endpoints (`items`, `triggers`, `conditions`, `date-time-providers`, `metadata`), sequence files (`files`, `load`, `save`, `delete`), editing (`add`, `duplicate`, `move`, `remove`, `set`, `fields`, `enable`, `clear`, `info`) and run control (`start`, `stop`, `reset`, `reset-status`, `skip-to-end`, `skip-current-item`, `current`, `current-running-item`)
+- New lightweight `/api/sequence/status` endpoint for polling the running sequence; item ids are kept in a thread-safe registry and the serializer is guarded against cycles
+- Added `tools/sequence-roundtrip.mjs` to test sequence load/serialize round trips against a running plugin
 
 ## ## 1.5.0.0
 - Persistent Celestia Atlas data (landscapes, DSS survey) now lives in `NINA\TnsCache` next to the other plugin data; an existing `NINA\Touch-N-Stars` tree is moved there once
