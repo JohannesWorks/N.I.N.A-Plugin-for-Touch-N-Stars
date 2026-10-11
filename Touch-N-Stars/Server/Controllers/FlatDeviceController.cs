@@ -4,6 +4,7 @@ using EmbedIO.WebApi;
 using NINA.Core.Model;
 using NINA.Core.Model.Equipment;
 using NINA.Core.Utility;
+using NINA.Equipment.Interfaces.Mediator;
 using NINA.Sequencer.SequenceItem.FlatDevice;
 using System;
 using System.Collections.Generic;
@@ -26,6 +27,7 @@ public class FlatDeviceController : WebApiController
     private static Func<int> _liveCompleted;         // reads CompletedIterations from active flat
     private static Func<double?> _liveADU;           // reads DeterminedHistogramADU from active flat
     private static double? _lastADU;                 // last ADU after a filter finishes
+    private static int _lastBitDepth;                // bit depth of the last prepared (measured) image, 0 = unknown
     private static int _completedFilters;
     private static int _totalFilters;
 
@@ -93,32 +95,49 @@ public class FlatDeviceController : WebApiController
             _liveCompleted = null;
             _liveADU = null;
             _lastADU = null;
+            _lastBitDepth = 0;
             _completedFilters = 0;
             _totalFilters = filters.Count;
 
             _flatTask = Task.Run(async () =>
             {
-                foreach (var fc in filters)
+                var imaging = TouchNStars.Mediators.Imaging;
+                if (imaging != null)
                 {
-                    token.ThrowIfCancellationRequested();
+                    imaging.ImagePrepared += OnImagePrepared;
+                }
 
-                    bool isLast = fc == filters[filters.Count - 1];
-                    bool panelClosed = !isLast || keepClosed;
-
-                    switch (mode)
+                try
+                {
+                    foreach (var fc in filters)
                     {
-                        case "AutoBrightness":
-                            await RunAutoBrightness(fc, filterList[fc.FilterId], panelClosed, progress, token);
-                            break;
-                        case "SkyFlat":
-                            await RunSkyFlat(fc, filterList[fc.FilterId], progress, token);
-                            break;
-                        default: // AutoExposure
-                            await RunAutoExposure(fc, filterList[fc.FilterId], panelClosed, progress, token);
-                            break;
+                        token.ThrowIfCancellationRequested();
+
+                        bool isLast = fc == filters[filters.Count - 1];
+                        bool panelClosed = !isLast || keepClosed;
+
+                        switch (mode)
+                        {
+                            case "AutoBrightness":
+                                await RunAutoBrightness(fc, filterList[fc.FilterId], panelClosed, progress, token);
+                                break;
+                            case "SkyFlat":
+                                await RunSkyFlat(fc, filterList[fc.FilterId], progress, token);
+                                break;
+                            default: // AutoExposure
+                                await RunAutoExposure(fc, filterList[fc.FilterId], panelClosed, progress, token);
+                                break;
+                        }
+                        _priorCompletedIterations += fc.Count;
+                        _completedFilters++;
                     }
-                    _priorCompletedIterations += fc.Count;
-                    _completedFilters++;
+                }
+                finally
+                {
+                    if (imaging != null)
+                    {
+                        imaging.ImagePrepared -= OnImagePrepared;
+                    }
                 }
             }, token);
 
@@ -152,8 +171,22 @@ public class FlatDeviceController : WebApiController
                 TotalFilters = running ? _totalFilters : -1,
                 CompletedFilters = running ? _completedFilters : -1,
                 CurrentADU = adu,
+                // Bit depth of the image CurrentADU was measured on (full scale 2^BitDepth - 1). For RAW
+                // frames it can be below the camera's profile bit depth, e.g. 14 for a NEF.
+                BitDepth = adu.HasValue && _lastBitDepth > 0 ? _lastBitDepth : (int?)null,
             },
         };
+    }
+
+    // The flat items prepare every measured frame before reading its statistics, so the image
+    // prepared last during a run is the one DeterminedHistogramADU came from.
+    private static void OnImagePrepared(object sender, ImagePreparedEventArgs e)
+    {
+        var bitDepth = e?.RenderedImage?.RawImageData?.Properties?.BitDepth;
+        if (bitDepth > 0)
+        {
+            _lastBitDepth = bitDepth.Value;
+        }
     }
 
     // ── GET /api/flats/stop ──────────────────────────────────────────────────

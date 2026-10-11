@@ -1,6 +1,7 @@
 # Touch 'N' Stars
 
 ## Unreleased
+- Multi-mode flats: `GET /api/flats/status` also reports `BitDepth`, the bit depth of the image `CurrentADU` was measured on (null while there is no ADU), so the app can scale the ADU correctly for RAW frames, e.g. a 14-bit NEF while the camera profile says 16 bit
 - Internal guider API: `POST /api/internal-guider/select-star` makes the star nearest a position in the guide frame the guide star while the guider is looping, for choosing the guide star by tapping it; see `INTERNAL_GUIDER_API.md`
 - Persistent Celestia Atlas data (landscapes, DSS survey) now lives in `NINA\TnsCache` next to the other plugin data; an existing `NINA\Touch-N-Stars` tree is moved there once
 - Atlas DSS survey download: new `/api/atlas/survey/*` endpoints (status, download, cancel, delete) fetch the DSS colour HiPS tile by tile onto the host as 512 px JPEG and serve it at `/celestia-atlas-data/surveys/dss` from the persistent data directory; resumable, one job at a time
