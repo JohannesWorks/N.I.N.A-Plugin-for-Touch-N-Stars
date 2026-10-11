@@ -1,6 +1,7 @@
 using EmbedIO.WebSockets;
 using NINA.Core.Enum;
 using NINA.Core.Utility;
+using NINA.Equipment.Equipment.MyTelescope;
 using NINA.INDI;
 using NINA.INDI.Devices;
 using System;
@@ -16,7 +17,8 @@ namespace TouchNStars.Server;
 /// Touch-N-Stars plugin so it can drive the mount by direction only. The slew rate is set
 /// separately through POST /api/indi/mount/slew-rate (the capability model); this socket never
 /// touches the rate, which keeps a chosen discrete step (e.g. "Guide") from being overwritten on
-/// every keepalive message.
+/// every keepalive message. pins' native OnStepX mount driver is moved the same way, at its
+/// selected move rate.
 ///
 /// Protocol: the client sends { "direction": "north|south|east|west|stop" } on press and repeats
 /// it as a keepalive (~every 800 ms); it sends "stop" on release. A server-side dead-man watchdog
@@ -44,14 +46,14 @@ public class MountControlSocket : WebSocketModule
             var json = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
             string direction = json != null && json.TryGetValue("direction", out var d) ? d?.ToString()?.ToLowerInvariant() : null;
 
-            var mount = INDIClient.Instance.GetRegisteredDevice<INDITelescope>();
-            if (mount == null)
+            var move = MountMover();
+            if (move == null)
             {
-                response = Error("No INDI mount is currently connected");
+                response = Error("No mount is currently connected");
             }
             else
             {
-                response = HandleDirection(mount, direction);
+                response = HandleDirection(move, direction);
             }
         }
         catch (Exception ex)
@@ -63,24 +65,48 @@ public class MountControlSocket : WebSocketModule
         await context.WebSocket.SendAsync(Encoding.GetBytes(JsonSerializer.Serialize(response)), true);
     }
 
-    private ApiResponse HandleDirection(INDITelescope mount, string direction)
+    /// <summary>
+    /// Direction-only motion of the connected mount: pins' native OnStepX driver when NINA uses it,
+    /// otherwise the INDI mount; null when neither is connected.
+    /// </summary>
+    private static Action<TelescopeAxes, int> MountMover()
     {
+        if (TouchNStars.Mediators?.Telescope?.GetDevice() is OnStepXTelescope { Connected: true } onStepX)
+        {
+            return onStepX.MoveAxisDirection;
+        }
+        var mount = INDIClient.Instance.GetRegisteredDevice<INDITelescope>();
+        return mount == null ? null : mount.MoveAxisDirection;
+    }
+
+    private ApiResponse HandleDirection(Action<TelescopeAxes, int> move, string direction)
+    {
+        // the profile's "primary/secondary reversed", which NINA applies in TelescopeVM.MoveAxis; this socket bypasses it
+        var settings = TouchNStars.Mediators?.Profile?.ActiveProfile?.TelescopeSettings;
+        int primary = settings?.PrimaryReversed == true ? -1 : 1;
+        int secondary = settings?.SecondaryReversed == true ? -1 : 1;
         switch (direction)
         {
             case "north":
-                mount.MoveAxisDirection(TelescopeAxes.Secondary, 1);
+                move(TelescopeAxes.Secondary, secondary);
                 break;
             case "south":
-                mount.MoveAxisDirection(TelescopeAxes.Secondary, -1);
+                move(TelescopeAxes.Secondary, -secondary);
                 break;
             case "east":
-                mount.MoveAxisDirection(TelescopeAxes.Primary, 1);
+                move(TelescopeAxes.Primary, primary);
                 break;
             case "west":
-                mount.MoveAxisDirection(TelescopeAxes.Primary, -1);
+                move(TelescopeAxes.Primary, -primary);
                 break;
             case "stop":
-                StopAll(mount);
+                lock (_lock)
+                {
+                    // a pending dead-man stop has nothing left to do
+                    _lastMoveAt = DateTime.UtcNow;
+                    _lastDirection = string.Empty;
+                }
+                StopAll(move);
                 return new ApiResponse { Success = true, Response = "Stopped Move", StatusCode = 200, Type = "MountControl" };
             default:
                 return Error("Invalid direction");
@@ -93,7 +119,7 @@ public class MountControlSocket : WebSocketModule
             _lastDirection = direction;
             scheduledAt = _lastMoveAt;
         }
-        ScheduleDeadManStop(mount, scheduledAt);
+        ScheduleDeadManStop(move, scheduledAt);
 
         return new ApiResponse { Success = true, Response = "Moving", StatusCode = 200, Type = "MountControl" };
     }
@@ -103,7 +129,7 @@ public class MountControlSocket : WebSocketModule
     /// The timestamp acts as a token: each move records a fresh <see cref="_lastMoveAt"/>, so a
     /// later message invalidates this scheduled stop.
     /// </summary>
-    private static void ScheduleDeadManStop(INDITelescope mount, DateTime scheduledAt)
+    private static void ScheduleDeadManStop(Action<TelescopeAxes, int> move, DateTime scheduledAt)
     {
         _ = Task.Run(async () =>
         {
@@ -118,7 +144,7 @@ public class MountControlSocket : WebSocketModule
                     }
                     if (DateTime.UtcNow - _lastMoveAt >= DeadManTimeout)
                     {
-                        StopAll(mount);
+                        StopAll(move);
                         _lastDirection = string.Empty;
                     }
                 }
@@ -130,10 +156,10 @@ public class MountControlSocket : WebSocketModule
         });
     }
 
-    private static void StopAll(INDITelescope mount)
+    private static void StopAll(Action<TelescopeAxes, int> move)
     {
-        mount.MoveAxisDirection(TelescopeAxes.Primary, 0);
-        mount.MoveAxisDirection(TelescopeAxes.Secondary, 0);
+        move(TelescopeAxes.Primary, 0);
+        move(TelescopeAxes.Secondary, 0);
     }
 
     private static ApiResponse Error(string error)

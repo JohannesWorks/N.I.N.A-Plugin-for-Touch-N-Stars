@@ -67,6 +67,7 @@ namespace TouchNStars.Server {
                 .WithController<LocationController>()    // Profile & mount site location
                 .WithController<ProfileController>()     // NINA profile management
                 .WithController<MountController>()       // Mount tracking rate control
+                .WithController<OnStepXController>()     // pins' native OnStepX mount settings
                 .WithController<GuiderShiftController>() // Guider shift rate (comet tracking)
                 .WithController<FlatDeviceController>()  // Flat device multi-filter capture
                 .WithController<FilterOffsetController>() // DarksCustoms filter offset calculator

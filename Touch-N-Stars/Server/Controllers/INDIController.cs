@@ -3,6 +3,7 @@ using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
+using NINA.Equipment.Equipment.MyTelescope;
 using NINA.INDI;
 using NINA.INDI.Devices;
 using NINA.INDI.Model;
@@ -158,6 +159,12 @@ public class INDIController : WebApiController
     {
         try
         {
+            if (NativeOnStepXMount(device) is { } onStepX)
+            {
+                HttpContext.Response.StatusCode = 200;
+                return new ApiResponse { Success = true, Response = OnStepXSlewRates(onStepX), StatusCode = 200, Type = "INDIMountSlewRates" };
+            }
+
             var mount = INDIClient.Instance.GetRegisteredDevice<INDITelescope>(
                 string.IsNullOrWhiteSpace(device) ? null : device);
             if (mount == null)
@@ -190,6 +197,29 @@ public class INDIController : WebApiController
         {
             var body = await HttpContext.GetRequestDataAsync<Dictionary<string, object>>();
             var device = body != null && body.TryGetValue("device", out var d) ? d?.ToString() : null;
+
+            if (NativeOnStepXMount(device) is { } onStepX)
+            {
+                if (body == null || !body.TryGetValue("index", out var onStepXIndexObj)
+                    || !int.TryParse(onStepXIndexObj?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var onStepXIndex))
+                {
+                    return ErrorResponse("This mount uses discrete slew rates; send 'index'", 400);
+                }
+                if (onStepXIndex < 0 || onStepXIndex >= onStepX.MoveRatesDegreesPerSecond.Count)
+                {
+                    return ErrorResponse($"Slew rate index must be 0-{onStepX.MoveRatesDegreesPerSecond.Count - 1}", 400);
+                }
+                try
+                {
+                    onStepX.SelectMoveRate(onStepXIndex);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return ErrorResponse(ex.Message, 400);
+                }
+                HttpContext.Response.StatusCode = 200;
+                return new ApiResponse { Success = true, Response = new { device = onStepX.DisplayName, index = onStepXIndex }, StatusCode = 200, Type = "INDIMountSlewRate" };
+            }
 
             var mount = INDIClient.Instance.GetRegisteredDevice<INDITelescope>(
                 string.IsNullOrWhiteSpace(device) ? null : device);
@@ -231,6 +261,35 @@ public class INDIController : WebApiController
             Logger.Error($"Error setting INDI mount slew rate: {ex}");
             return ErrorResponse("An unexpected error occurred while setting the mount slew rate");
         }
+    }
+
+    /// <summary>
+    /// The mount connected in NINA when it is pins' native OnStepX driver rather than an INDI mount. It has OnStep's ten
+    /// move rates, offered with the same names and indices INDI's LX200_OnStep uses, so the client is unchanged. A request
+    /// naming another device is meant for an INDI mount.
+    /// </summary>
+    internal static OnStepXTelescope NativeOnStepXMount(string device = null)
+        => TouchNStars.Mediators?.Telescope?.GetDevice() is OnStepXTelescope { Connected: true } mount
+            && (string.IsNullOrWhiteSpace(device) || device == mount.DisplayName || device == mount.Name)
+            ? mount
+            : null;
+
+    private static SlewRateCapability OnStepXSlewRates(OnStepXTelescope mount)
+    {
+        var rates = mount.MoveRatesDegreesPerSecond;
+        var options = new List<SlewRateOption>(rates.Count);
+        for (int i = 0; i < rates.Count; i++)
+        {
+            options.Add(new SlewRateOption
+            {
+                Index = i,
+                Name = i.ToString(CultureInfo.InvariantCulture),
+                Label = OnStepXTelescope.MoveRateLabels[i],
+                IsSelected = i == mount.SelectedMoveRate,
+                EstimatedRateDps = rates[i]
+            });
+        }
+        return new SlewRateCapability { Kind = SlewRateKind.Discrete, PropertyName = "TELESCOPE_SLEW_RATE", Options = options };
     }
 
     /// <summary>
