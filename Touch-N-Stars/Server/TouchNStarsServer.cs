@@ -75,6 +75,7 @@ namespace TouchNStars.Server {
                 .WithController<ProxyController>()       // Generic proxy for external URLs
                 .WithController<FilesystemController>()
                 .WithController<FitsAnalysisController>()
+                .WithController<RawImageController>()     // Raw sensor data for histogram/stretch
                 .WithController<StellariumLandscapeController>()
                 .WithController<HipsSurveyController>()  // Atlas survey downloads (DSS, NSNS)
                 .WithController<NightSummaryController>()
