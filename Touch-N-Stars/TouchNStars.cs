@@ -6,6 +6,7 @@ using NINA.Plugin;
 using NINA.Plugin.Interfaces;
 using NINA.Profile.Interfaces;
 using NINA.Sequencer.Interfaces.Mediator;
+using NINA.WPF.Base.Interfaces.Mediator;
 using NINA.WPF.Base.Interfaces.ViewModel;
 using System;
 using System.Collections.Generic;
@@ -64,7 +65,9 @@ namespace TouchNStars {
                     IFramingAssistantVM framingAssistantVM,
                     IGuiderMediator guider,
                     IMessageBroker broker,
-                    ISequenceMediator sequence) {
+                    ISequenceMediator sequence,
+                    IImagingMediator imagingMediator,
+                    IImageSaveMediator imageSaveMediator) {
             if (Settings.Default.UpdateSettings) {
                 Settings.Default.Upgrade();
                 Settings.Default.UpdateSettings = false;
@@ -81,6 +84,9 @@ namespace TouchNStars {
                             guider,
                             broker,
                             sequence);
+
+            // Raw data for the app's histogram: tracks the prepared image and saved frame paths.
+            Server.Services.RawImageService.Attach(imagingMediator, imageSaveMediator);
 
             UpdateDefaultPortCommand = new CommunityToolkit.Mvvm.Input.RelayCommand(() => {
                 Port = CachedPort;
@@ -155,6 +161,7 @@ namespace TouchNStars {
             mdnsBroadcaster = null;
             Communicator.Dispose();
             Server.Controllers.PHD2Controller.CleanupPHD2Service();
+            Server.Services.RawImageService.Detach();
             return base.Teardown();
         }
 
