@@ -1,5 +1,8 @@
 # Touch 'N' Stars
 
+## ## 1.6.1.0 Beta
+- Webapp: add AAPA Plugin  
+
 ## ## 1.6.0.0 Beta
 - Raw image data (`/api/raw-image/prepared`, `/history`, `/livestack`): 16-bit preview planes plus an exact full-resolution histogram (65536 bins per channel) and statistics for the app's histogram and client-side stretch; OSC frames are superpixel-debayered, responses are gzip-compressed
 - Atlas NSNS narrowband survey (CC BY-NC-SA 4.0): the survey endpoints take an optional `survey` (`dss` default, `nsns` colour composite ohs8, `nsns-ha`, `nsns-oiii`, `nsns-sii` single lines); NSNS tiles inside its Moc.fits coverage are fetched from simg.de, stored as JPEG q85 and served at `/celestia-atlas-data/surveys/nsns`; only one survey download runs at a time
