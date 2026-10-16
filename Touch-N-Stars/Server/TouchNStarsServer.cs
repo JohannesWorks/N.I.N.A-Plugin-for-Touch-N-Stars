@@ -62,6 +62,7 @@ namespace TouchNStars.Server {
                 .WithController<FilesystemController>()
                 .WithController<FitsAnalysisController>()
                 .WithController<RawImageController>()     // Raw sensor data for histogram/stretch
+                .WithController<LivestackSettingsController>() // Livestack plugin options
                 .WithController<StellariumLandscapeController>()
                 .WithController<HipsSurveyController>()  // Atlas survey downloads (DSS, NSNS)
                 .WithController<NightSummaryController>());  // Night Summary plugin integration

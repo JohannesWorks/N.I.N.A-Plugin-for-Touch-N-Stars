@@ -8,7 +8,6 @@ using NINA.Core.Enum;
 using NINA.Core.Utility;
 using NINA.Equipment.Interfaces.Mediator;
 using NINA.Image.Interfaces;
-using NINA.Profile;
 using NINA.WPF.Base.Interfaces.Mediator;
 
 namespace TouchNStars.Server.Services {
@@ -31,8 +30,6 @@ namespace TouchNStars.Server.Services {
     /// events have to be subscribed once for the lifetime of the plugin.
     /// </summary>
     public class RawImageService {
-        // The Livestack plugin (isbeorn/nina.plugin.livestack) - its settings are read, never written.
-        private static readonly Guid LivestackPluginId = Guid.Parse("10bc1716-54af-425e-b307-c0ca1ce10600");
         private static readonly string[] OscChannelFilters = { "R_OSC", "G_OSC", "B_OSC" };
         private const int SavedImageCapacity = 1000;
 
@@ -163,11 +160,10 @@ namespace TouchNStars.Server.Services {
                 throw new RawImageException(400, "invalid-parameters", "target and filter are required");
             }
 
-            var settings = new PluginOptionsAccessor(TouchNStars.Mediators.Profile, LivestackPluginId);
-            if (!settings.GetValueBoolean("SaveStackedLights", false)) {
+            if (!LivestackSettingsService.GetSaveStackedLights()) {
                 throw new RawImageException(409, "livestack-save-disabled", "Livestack does not save its stacks to disk");
             }
-            string stackFolder = Path.Combine(settings.GetValueString("WorkingDirectory", Path.GetTempPath()), "stacks");
+            string stackFolder = LivestackSettingsService.GetStackFolder();
 
             // The colour combination itself is only saved as a stretched PNG. For OSC stacks the
             // three channel stacks share one alignment, so they recombine into real RGB data;
