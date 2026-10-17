@@ -11,6 +11,7 @@ using System.Threading;
 using TouchNStars.Properties;
 using System.Threading.Tasks;
 using System.Text;
+using TouchNStars.Server.Bridge;
 using TouchNStars.Server.Controllers;
 using TouchNStars.Server.Services;
 
@@ -42,6 +43,8 @@ namespace TouchNStars.Server {
             foreach (string endPoint in appEndPoints) {
                 WebServer = WebServer.WithModule(new RedirectModule("/" + endPoint, "/")); // redirect all reloads of the app to the root
             }
+            // Plugin bridge events; must be registered before the "/" static folder.
+            WebServer = WebServer.WithModule(new PluginBridgeSocketModule("/ws/ext"));
             WebServer = WebServer.WithWebApi("/api", m => m
                 .WithController<AutofocusController>()   // Autofocus control
                 .WithController<DialogController>()      // Dialog endpoints
@@ -64,7 +67,8 @@ namespace TouchNStars.Server {
                 .WithController<RawImageController>()     // Raw sensor data for histogram/stretch
                 .WithController<StellariumLandscapeController>()
                 .WithController<HipsSurveyController>()  // Atlas survey downloads (DSS, NSNS)
-                .WithController<NightSummaryController>());  // Night Summary plugin integration
+                .WithController<NightSummaryController>()  // Night Summary plugin integration (legacy path)
+                .WithController<PluginBridgeController>()); // Third-party plugins via the message-broker bridge
             WebServer = WebServer.WithStaticFolder(
                 StellariumLandscapeService.UserLandscapesRoute,
                 userLandscapesDir,

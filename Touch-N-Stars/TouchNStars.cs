@@ -95,6 +95,9 @@ namespace TouchNStars {
 
             Communicator = new Communicator();
 
+            // Before the web server starts: its /ws/ext module attaches to the running bridge.
+            Server.Bridge.PluginBridgeService.Initialize(broker, Guid.TryParse(PluginId, out Guid bridgeSenderId) ? bridgeSenderId : Guid.Empty);
+
             SetHostNames();
 
             if (AppEnabled) {
@@ -160,6 +163,7 @@ namespace TouchNStars {
             mdnsBroadcaster?.Dispose();
             mdnsBroadcaster = null;
             Communicator.Dispose();
+            Server.Bridge.PluginBridgeService.Shutdown();
             Server.Controllers.PHD2Controller.CleanupPHD2Service();
             Server.Services.RawImageService.Detach();
             return base.Teardown();

@@ -20,3 +20,9 @@ Existing generated landscapes are migrated automatically.
   The API port must be set to 1888 and V2 must be enabled.
   Additionally, "Use Access-Control-Allow-Origin Header" must be enabled.
 - Version 2.2.2.0 or newer is required for Three Point Polar Alignment.
+
+### 🔌 **For plugin developers**
+Want your own N.I.N.A. plugin to show up in Touch'N'Stars? Use the **plugin bridge**: your
+plugin talks to Touch'N'Stars over the N.I.N.A. message broker and needs no web server, port or
+DLL dependency of its own. Guide, the copy-paste file `TnsBridge.cs` and a complete example:
+[docs/plugin-bridge](docs/plugin-bridge/README.md).

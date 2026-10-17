@@ -17,3 +17,9 @@ Sollte der Ordner nicht vorhanden sein, bitte vorher erstellen.
   Der Port der API muss auf 1888 eingestellt sein und die V2 muss aktiv sein.
   Zusätzlich muss "Use Access-Control-Allow-Origin Header" aktiv sein.
 - Für das Three Point Polar Alignment wird die Version 2.2.2.0 oder neuer benötigt.
+
+### 🔌 **Für Plugin-Entwickler**
+Du möchtest dein eigenes N.I.N.A.-Plugin in Touch'N'Stars einbinden? Nutze die **Plugin-Bridge**:
+Dein Plugin spricht über den N.I.N.A.-MessageBroker mit Touch'N'Stars und braucht keinen eigenen
+Webserver, keinen Port und keine DLL-Abhängigkeit. Anleitung (Englisch), die Kopiervorlage
+`TnsBridge.cs` und ein vollständiges Beispiel: [docs/plugin-bridge](docs/plugin-bridge/README.md).

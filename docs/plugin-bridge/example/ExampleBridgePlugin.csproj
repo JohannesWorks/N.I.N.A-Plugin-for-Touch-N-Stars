@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>ExampleBridgePlugin</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- N.I.N.A. provides these at runtime; do not ship them with the plugin. -->
+    <PackageReference Include="NINA.Plugin" Version="3.1.2.9001" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- In your own plugin, copy TnsBridge.cs into the project instead of linking it. -->
+    <Compile Include="..\TnsBridge.cs" Link="TnsBridge.cs" />
+  </ItemGroup>
+</Project>

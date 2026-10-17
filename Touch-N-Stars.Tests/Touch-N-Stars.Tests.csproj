@@ -19,4 +19,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Touch-N-Stars\Touch-N-Stars.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The plugin-author file itself, so the bridge tests exercise exactly what authors copy. -->
+    <Compile Include="..\docs\plugin-bridge\TnsBridge.cs" Link="PluginBridge\TnsBridge.cs" />
+  </ItemGroup>
 </Project>
