@@ -53,6 +53,7 @@ namespace TouchNStars {
         IFocuserMediator focuser,
         IOptionsVM options,
         IAdvancedGuider internalGuider,
+        IApplicationStatusMediator applicationStatus,
         IPlateSolverFactory plateSolverFactory = null) {
 
         public readonly IDeepSkyObjectSearchVM DeepSkyObjectSearchVM = DeepSkyObjectSearchVM;
@@ -76,6 +77,7 @@ namespace TouchNStars {
         public readonly IOptionsVM Options = options;
         // pins: the internal guider (also while another guider is selected), exported by pins to plugins.
         public readonly IAdvancedGuider InternalGuider = internalGuider;
+        public readonly IApplicationStatusMediator ApplicationStatus = applicationStatus;
         // Plate solving for the cone error measurement (never the centering solver, which syncs).
         public readonly IPlateSolverFactory PlateSolverFactory = plateSolverFactory;
     }
@@ -120,7 +122,8 @@ namespace TouchNStars {
                     IFocuserMediator focuserMediator,
                     IOptionsVM optionsVM,
                     IAdvancedGuider internalGuider,
-                    IPlateSolverFactory plateSolverFactory) {
+                    IPlateSolverFactory plateSolverFactory,
+                    IApplicationStatusMediator applicationStatusMediator) {
             if (Settings.Default.UpdateSettings) {
                 Settings.Default.Upgrade();
                 Settings.Default.UpdateSettings = false;
@@ -149,6 +152,7 @@ namespace TouchNStars {
                             focuserMediator,
                             optionsVM,
                             internalGuider,
+                            applicationStatusMediator,
                             plateSolverFactory);
 
             // Raw data for the app's histogram: tracks the prepared image and saved frame paths.
