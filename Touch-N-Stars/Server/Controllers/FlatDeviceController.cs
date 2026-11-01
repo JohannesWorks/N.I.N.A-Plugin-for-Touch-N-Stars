@@ -13,8 +13,8 @@ namespace TouchNStars.Server.Controllers;
 
 /// <summary>
 /// Flat assistant runs executed by the plugin itself (see FlatWizardService), so they keep going
-/// while the app is in the background. Same routes as the PINS fork's multi-filter controller;
-/// the status carries `Workflow` so the app can tell this implementation apart.
+/// while the app is in the background. The status carries `Workflow` so the app can tell this
+/// implementation apart from the earlier controller-side one.
 /// </summary>
 public class FlatDeviceController : WebApiController
 {
@@ -66,13 +66,17 @@ public class FlatDeviceController : WebApiController
         }
     }
 
-    // ── GET /api/flats/stop ──────────────────────────────────────────────────
+    // ── GET /api/flats/stop[?runId=...] ──────────────────────────────────────
+    // Idempotent: stopping while nothing runs is fine. With runId, only that run is stopped.
     [Route(HttpVerbs.Get, "/flats/stop")]
-    public ApiResponse StopRun()
+    public ApiResponse StopRun([QueryField] string runId)
     {
         try
         {
-            FlatWizardService.Stop();
+            if (!FlatWizardService.Stop(runId))
+            {
+                return Fail(409, "That flat run is no longer the current one");
+            }
             return new ApiResponse { Success = true, Response = "Flat capture stop requested", StatusCode = 200, Type = "Success" };
         }
         catch (Exception ex)
@@ -82,14 +86,15 @@ public class FlatDeviceController : WebApiController
         }
     }
 
-    // ── GET /api/flats/confirm-cover?confirmed=true|false ─────────────────────
+    // ── GET /api/flats/confirm-cover?confirmed=true|false[&runId=...] ─────────
     // Answers the "cover the telescope" question a run waits on before its dark flats.
     [Route(HttpVerbs.Get, "/flats/confirm-cover")]
-    public ApiResponse ConfirmCover([QueryField] bool confirmed)
+    public ApiResponse ConfirmCover([QueryField(true)] bool confirmed, [QueryField] string runId)
     {
-        if (!FlatWizardService.ConfirmCover(confirmed))
+        var (statusCode, error) = FlatWizardService.ConfirmCover(confirmed, runId);
+        if (error != null)
         {
-            return Fail(409, "No flat run is waiting for the telescope to be covered");
+            return Fail(statusCode, error);
         }
         return new ApiResponse { Success = true, Response = confirmed ? "Dark flats started" : "Dark flats skipped", StatusCode = 200, Type = "Success" };
     }
