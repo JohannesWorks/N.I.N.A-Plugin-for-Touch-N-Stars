@@ -1,3 +1,4 @@
+using NINA.Core.Locale;
 using NINA.Core.Model;
 using NINA.Core.Model.Equipment;
 using NINA.Core.Utility;
@@ -13,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -461,7 +463,7 @@ public static class FlatWizardService
             // NINA's flat items throw this when the light is too dim or too bright.
             Logger.Warning($"Flats failed for filter {state.FilterName}: {ex.Message}");
             error = ex.Message;
-            outcome = ClassifyFailure(determinedADU(), fc.HistogramMean / 100.0);
+            outcome = ClassifySkyFlatLimit(ex.Message) ?? ClassifyFailure(determinedADU(), fc.HistogramMean / 100.0);
         }
         catch (Exception ex)
         {
@@ -639,6 +641,31 @@ public static class FlatWizardService
         if (fraction > targetFraction) return "bright";
         return "failed";
     }
+
+    /// <summary>
+    /// PINS' SkyFlat stops when the predicted exposure leaves the min/max range; DeterminedHistogramADU
+    /// is from the last determination by then, so the direction comes from which limit was hit:
+    /// over max means the sky got too dim, under min too bright. Null for any other failure.
+    /// </summary>
+    private static string ClassifySkyFlatLimit(string message)
+    {
+#if PINS
+        if (MatchesLocalized(message, "LblExposureOverMax")) return "dim";
+        if (MatchesLocalized(message, "LblExposureUnderMin")) return "bright";
+#endif
+        return null;
+    }
+
+#if PINS
+    // The message is the localized format with the exposure time filled in for {0}.
+    private static bool MatchesLocalized(string message, string key)
+    {
+        var format = Loc.Instance[key];
+        if (string.IsNullOrEmpty(message) || string.IsNullOrEmpty(format) || !format.Contains("{0}")) return false;
+        var pattern = "^" + Regex.Escape(format).Replace(@"\{0}", ".*") + "$";
+        return Regex.IsMatch(message, pattern, RegexOptions.Singleline);
+    }
+#endif
 
     // ── Dark flats ─────────────────────────────────────────────────────────────
 
