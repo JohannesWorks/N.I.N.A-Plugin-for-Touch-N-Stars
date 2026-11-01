@@ -1,6 +1,8 @@
 using NINA.Core.Model;
 using NINA.Core.Model.Equipment;
 using NINA.Core.Utility;
+using NINA.Core.Utility.Notification;
+using NINA.Equipment.Interfaces;
 using NINA.Equipment.Interfaces.Mediator;
 using NINA.Equipment.Model;
 using NINA.Sequencer.Container;
@@ -30,11 +32,13 @@ public static class FlatWizardService
 {
     public const int WorkflowVersion = 2;
 
-    private const int MaxTargetNameLength = 64;
+    private const string StatusSource = "Touch 'N' Stars Flats";
+
+    // Without a client the cover question would otherwise hold the run (and block every new one) forever.
+    private static readonly TimeSpan CoverConfirmationTimeout = TimeSpan.FromMinutes(30);
 
     private static readonly object gate = new();
 
-    private static Task runTask;
     private static CancellationTokenSource runCts;
     private static TaskCompletionSource<bool> coverConfirmation;
 
@@ -92,11 +96,10 @@ public static class FlatWizardService
             {
                 return (400, "Count must be greater than zero");
             }
-        }
-
-        if (mediators.Camera?.GetInfo()?.Connected != true)
-        {
-            return (409, "Camera not connected");
+            if (!string.IsNullOrEmpty(fc.Binning) && ParseBinning(fc.Binning) == null)
+            {
+                return (400, $"Invalid binning '{fc.Binning}'");
+            }
         }
 
         var requestedMode = request.Mode switch
@@ -105,6 +108,23 @@ public static class FlatWizardService
             "SkyFlat" => "SkyFlat",
             _ => "AutoExposure",
         };
+
+        // Sky flats change their exposure time from frame to frame, a single dark time cannot match them.
+        if (requestedMode == "SkyFlat" && request.DarkCount > 0)
+        {
+            return (400, "Dark flats are not supported for sky flats");
+        }
+
+        if (mediators.Camera?.GetInfo()?.Connected != true)
+        {
+            return (409, "Camera not connected");
+        }
+
+        // The run would switch filters and the panel light under the sequence's lights.
+        if (ImagingActivity.IsSequenceRunning())
+        {
+            return (409, "A sequence is running. Stop it before starting a flat run.");
+        }
 
         lock (gate)
         {
@@ -130,49 +150,81 @@ public static class FlatWizardService
             liveADU = null;
             lastADU = null;
             lastBitDepth = 0;
-            targetName = SanitizeTargetName(request.TargetName);
+            targetName = FlatTargetNameService.SanitizeTargetName(request.TargetName);
             flatTargetName = null;
-            filterStates = request.Filters.Select(fc => new FilterRunState
+            // The filter is resolved once here: looking the index up again later would pick another
+            // filter after a profile change or a removed filter.
+            filterStates = request.Filters.Select(fc =>
             {
-                Config = fc,
-                FilterId = fc.FilterId,
-                FilterName = fc.FilterId.HasValue ? filterList[fc.FilterId.Value]?.Name : null,
-                State = "pending",
-                Count = fc.Count,
-                DarkCount = darkCount,
-                DarkState = darkCount > 0 ? "pending" : "none",
+                var filter = fc.FilterId.HasValue ? filterList[fc.FilterId.Value] : null;
+                return new FilterRunState
+                {
+                    Config = fc,
+                    FilterId = fc.FilterId,
+                    Filter = filter,
+                    FilterName = filter?.Name,
+                    State = "pending",
+                    Count = fc.Count,
+                    DarkCount = darkCount,
+                    DarkState = darkCount > 0 ? "pending" : "none",
+                };
             }).ToList();
 
             var token = runCts.Token;
             var keepClosed = request.KeepClosed;
-            runTask = Task.Run(() => RunAsync(keepClosed, token));
+            _ = Task.Run(() => RunAsync(keepClosed, token));
         }
 
         return (200, null);
     }
 
-    public static void Stop()
+    /// <summary>
+    /// Stops the run. With a runId only that run is stopped; returns false when it is not the
+    /// current run.
+    /// </summary>
+    public static bool Stop(string forRunId = null)
     {
+        CancellationTokenSource cts;
+        TaskCompletionSource<bool> confirmation;
         lock (gate)
         {
-            if (!running) return;
+            if (!IsCurrentRun(forRunId)) return false;
+            if (!running) return true;
             stopRequested = true;
-            runCts?.Cancel();
-            coverConfirmation?.TrySetResult(false);
+            cts = runCts;
+            confirmation = coverConfirmation;
         }
+
+        // Outside the lock: cancelling runs the drivers' abort callbacks synchronously (an HTTP call
+        // for Alpaca), which must not hold up the status or NINA's save queue.
+        confirmation?.TrySetResult(false);
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The run ended and a new Start disposed it meanwhile.
+        }
+        return true;
     }
 
     /// <summary>
     /// Answers the "cover the telescope" question the run waits on before its dark flats.
     /// </summary>
-    public static bool ConfirmCover(bool confirmed)
+    public static (int StatusCode, string Error) ConfirmCover(bool confirmed, string forRunId = null)
     {
         lock (gate)
         {
-            if (coverConfirmation == null) return false;
-            return coverConfirmation.TrySetResult(confirmed);
+            if (!IsCurrentRun(forRunId)) return (409, "That flat run is no longer the current one");
+            if (coverConfirmation == null || !coverConfirmation.TrySetResult(confirmed))
+                return (409, "No flat run is waiting for the telescope to be covered");
+            return (200, null);
         }
     }
+
+    // Caller holds `gate`.
+    private static bool IsCurrentRun(string forRunId) => string.IsNullOrEmpty(forRunId) || forRunId == runId;
 
     public static object GetStatus()
     {
@@ -197,7 +249,7 @@ public static class FlatWizardService
             else
             {
                 total = current.Count;
-                completed = current.LiveCompleted?.Invoke() ?? current.Completed;
+                completed = current.Completed;
             }
 
             return new
@@ -229,7 +281,9 @@ public static class FlatWizardService
                     f.FilterId,
                     f.FilterName,
                     f.State,
-                    Completed = f.LiveCompleted?.Invoke() ?? f.Completed,
+                    // Frames NINA actually wrote to disk, not loop iterations.
+                    f.Completed,
+                    f.SaveFailed,
                     f.Count,
                     f.ExposureTime,
                     f.Brightness,
@@ -237,6 +291,7 @@ public static class FlatWizardService
                     f.Error,
                     f.DarkState,
                     f.DarkCompleted,
+                    f.DarkSaveFailed,
                     f.DarkCount,
                 }).ToList(),
             };
@@ -247,24 +302,17 @@ public static class FlatWizardService
 
     private static async Task RunAsync(bool keepClosed, CancellationToken token)
     {
-        var mediators = TouchNStars.Mediators;
-        var statusMediator = mediators.ApplicationStatus;
-        IProgress<ApplicationStatus> progress = new Progress<ApplicationStatus>(s =>
-        {
-            if (s == null) return;
-            s.Source = "Touch 'N' Stars Flats";
-            statusMediator?.StatusUpdate(s);
-        });
-
-        AttachImageHooks();
+        var progress = new FlatStatusProgress(TouchNStars.Mediators.ApplicationStatus);
 
         List<FilterRunState> states;
         string runMode;
+        string currentRunId;
         int darks;
         lock (gate)
         {
             states = filterStates;
             runMode = mode;
+            currentRunId = runId;
             darks = darkCount;
         }
 
@@ -272,6 +320,8 @@ public static class FlatWizardService
 
         try
         {
+            AttachImageHooks();
+
             for (int i = 0; i < states.Count; i++)
             {
                 if (token.IsCancellationRequested) break;
@@ -307,25 +357,28 @@ public static class FlatWizardService
 
             if (usesPanel && !keepClosed && !token.IsCancellationRequested)
             {
+                // A failed filter can leave the light on; never open the cover with it burning.
+                await SwitchPanelLightOff();
                 await OpenCoverIfSupported(progress, token);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             // Stop requested - the per-filter states already say where it stopped. NINA's flat
             // items only switch the panel light off when they fail, not when they are cancelled.
-            if (usesPanel) await SwitchLightOffAfterStop();
+            if (usesPanel) await SwitchPanelLightOff();
         }
         catch (Exception ex)
         {
             Logger.Error(ex);
             lock (gate) runError = ex.Message;
+            if (usesPanel) await SwitchPanelLightOff();
         }
         finally
         {
             // NINA saves through a background queue, so the run's last frames can still be waiting
             // to be written when the run ends. Keep the hooks a little longer for them.
-            _ = DetachImageHooksLater();
+            _ = DetachImageHooksLater(currentRunId);
 
             lock (gate)
             {
@@ -344,7 +397,7 @@ public static class FlatWizardService
                 finishedAt = DateTime.UtcNow;
             }
 
-            progress.Report(new ApplicationStatus());
+            progress.Clear();
         }
     }
 
@@ -359,10 +412,7 @@ public static class FlatWizardService
 
         try
         {
-            var filter = fc.FilterId.HasValue
-                ? TouchNStars.Mediators.Profile.ActiveProfile.FilterWheelSettings.FilterWheelFilters[fc.FilterId.Value]
-                : null;
-            (flat, exposureItem, determinedADU, brightness) = BuildFlat(runMode, fc, filter, keepPanelClosed);
+            (flat, exposureItem, determinedADU, brightness) = BuildFlat(runMode, fc, state.Filter, keepPanelClosed);
         }
         catch (Exception ex)
         {
@@ -390,7 +440,6 @@ public static class FlatWizardService
         var loop = GetIterations(flat);
         lock (gate)
         {
-            state.LiveCompleted = () => loop.CompletedIterations;
             liveADU = () => determinedADU() > 0 ? determinedADU() : (double?)null;
         }
 
@@ -399,24 +448,52 @@ public static class FlatWizardService
         try
         {
             await flat.Execute(progress, token);
-            outcome = loop.CompletedIterations >= state.Count ? "success" : "failed";
+            outcome = null;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             outcome = "stopped";
+        }
+        catch (SequenceEntityFailedException ex)
+        {
+            // NINA's flat items throw this when the light is too dim or too bright.
+            Logger.Warning($"Flats failed for filter {state.FilterName}: {ex.Message}");
+            error = ex.Message;
+            outcome = ClassifyFailure(determinedADU(), fc.HistogramMean / 100.0);
         }
         catch (Exception ex)
         {
             Logger.Warning($"Flats failed for filter {state.FilterName}: {ex.Message}");
             error = ex.Message;
-            outcome = token.IsCancellationRequested ? "stopped" : ClassifyFailure(determinedADU(), fc.HistogramMean / 100.0);
+            outcome = token.IsCancellationRequested ? "stopped" : "failed";
+        }
+
+        if (outcome != "stopped")
+        {
+            // The flat items only switch the light off after a "too dim / too bright" failure, not
+            // after a camera error.
+            if (outcome != null && runMode != "SkyFlat") await SwitchPanelLightOff();
+
+            // A loop iteration also counts when the exposure inside it failed (the flat items run
+            // with ContinueOnError) or when the file could not be written, so only frames NINA
+            // reports as saved count. Wait for the save queue before the next filter takes over the
+            // counting. A successful iteration queues exactly one frame.
+            var captured = loop.CompletedIterations;
+            await WaitForSaves(() => state.Completed + state.SaveFailed >= captured,
+                () => state.SavesStarted <= state.Completed + state.SaveFailed, token);
+            if (outcome == null)
+            {
+                lock (gate)
+                {
+                    outcome = state.Completed >= state.Count ? "success" : "failed";
+                    if (outcome == "failed") error = SaveSummary(state.Completed, state.Count, "flats", state.SaveError);
+                }
+            }
         }
 
         lock (gate)
         {
             var adu = determinedADU();
-            state.Completed = loop.CompletedIterations;
-            state.LiveCompleted = null;
             state.LastADU = adu > 0 ? adu : null;
             state.ExposureTime = exposureItem.ExposureTime;
             state.Binning = exposureItem.Binning;
@@ -446,21 +523,25 @@ public static class FlatWizardService
                     flat.GetIterations().Iterations = fc.Count;
                     flat.GetExposureItem().ExposureTime = fc.ExposureTime;
 
-#if PINS
-                    // Widen the expression range so Validate() accepts panels whose maximum is above 100.
+                    // The app sends the profile value (default 32767), which is above any real panel;
+                    // NINA's own wizard clamps to the panel's range as well. Validate() only accepts
+                    // values inside it. Without a connected panel validation fails, as it should.
                     var deviceInfo = m.FlatDevice?.GetInfo();
-                    double deviceMax = deviceInfo?.Connected == true ? deviceInfo.MaxBrightness : 0;
-                    flat.MaxBrightnessExpression.Range = [0, deviceMax, 0];
-                    flat.MinBrightnessExpression.Range = [0, deviceMax, 0];
-#endif
-                    flat.MaxBrightness = fc.MaxBrightness;
-                    flat.MinBrightness = fc.MinBrightness;
+                    var maxBrightness = fc.MaxBrightness;
+                    var minBrightness = fc.MinBrightness;
+                    if (deviceInfo?.Connected == true && deviceInfo.MaxBrightness > deviceInfo.MinBrightness)
+                    {
+                        maxBrightness = Math.Clamp(maxBrightness, deviceInfo.MinBrightness, deviceInfo.MaxBrightness);
+                        minBrightness = Math.Clamp(minBrightness, deviceInfo.MinBrightness, maxBrightness);
+                    }
+                    flat.MaxBrightness = maxBrightness;
+                    flat.MinBrightness = minBrightness;
 
                     flat.HistogramTargetPercentage = fc.HistogramMean / 100.0;
                     flat.HistogramTolerancePercentage = fc.MeanTolerance / 100.0;
                     flat.KeepPanelClosed = keepPanelClosed;
                     ApplyExposureSettings(flat.GetExposureItem(), fc);
-                    if (filter != null) flat.GetSwitchFilterItem().Filter = filter;
+                    ApplyFilter(flat.GetSwitchFilterItem(), filter);
                     return (flat, flat.GetExposureItem(), () => flat.DeterminedHistogramADU,
                         () => flat.GetSetBrightnessItem().Brightness);
                 }
@@ -479,7 +560,7 @@ public static class FlatWizardService
                     flat.HistogramTargetPercentage = fc.HistogramMean / 100.0;
                     flat.HistogramTolerancePercentage = fc.MeanTolerance / 100.0;
                     ApplyExposureSettings(flat.GetExposureItem(), fc);
-                    if (filter != null) flat.GetSwitchFilterItem().Filter = filter;
+                    ApplyFilter(flat.GetSwitchFilterItem(), filter);
                     return (flat, flat.GetExposureItem(), () => flat.DeterminedHistogramADU, () => null);
                 }
             default:
@@ -494,11 +575,25 @@ public static class FlatWizardService
                     flat.HistogramTolerancePercentage = fc.MeanTolerance / 100.0;
                     flat.KeepPanelClosed = keepPanelClosed;
                     ApplyExposureSettings(flat.GetExposureItem(), fc);
-                    if (filter != null) flat.GetSwitchFilterItem().Filter = filter;
+                    ApplyFilter(flat.GetSwitchFilterItem(), filter);
                     return (flat, flat.GetExposureItem(), () => flat.DeterminedHistogramADU,
                         () => flat.GetSetBrightnessItem().Brightness);
                 }
         }
+    }
+
+    private static void ApplyFilter(NINA.Sequencer.SequenceItem.FilterWheel.SwitchFilter switchItem, FilterInfo filter)
+    {
+        if (filter != null)
+        {
+            switchItem.Filter = filter;
+            return;
+        }
+#if PINS
+        // PINS' SwitchFilter only keeps the current filter for exactly this marker; a null
+        // ComboBoxText resolves to position 0 when it executes.
+        switchItem.ComboBoxText = NullFilter.Instance.Name;
+#endif
     }
 
     private static NINA.Sequencer.Conditions.LoopCondition GetIterations(SequentialContainer flat) => flat switch
@@ -520,8 +615,8 @@ public static class FlatWizardService
     private static BinningMode ParseBinning(string binningName)
     {
         if (string.IsNullOrEmpty(binningName)) return null;
-        var parts = binningName.Split('x');
-        if (parts.Length == 2 && short.TryParse(parts[0], out short x) && short.TryParse(parts[1], out short y))
+        var parts = binningName.Trim().Split('x', 'X');
+        if (parts.Length == 2 && short.TryParse(parts[0], out short x) && short.TryParse(parts[1], out short y) && x > 0 && y > 0)
             return new BinningMode(x, y);
         return null;
     }
@@ -552,18 +647,27 @@ public static class FlatWizardService
         var flatInfo = m.FlatDevice?.GetInfo();
         var panelConnected = usesPanel && flatInfo?.Connected == true;
 
+        // A flip-flat panel shuts out the light by itself. The mediator reports neither a stuck cover
+        // nor a light that stayed on, so the panel's state is read back before relying on it.
+        var coveredByPanel = false;
         if (panelConnected)
         {
             await m.FlatDevice.ToggleLight(false, progress, token);
             if (flatInfo.SupportsOpenClose)
             {
                 await m.FlatDevice.CloseCover(progress, token);
+                var after = m.FlatDevice.GetInfo();
+                coveredByPanel = after?.Connected == true && after.CoverState == CoverState.Closed && !after.LightOn;
+                if (!coveredByPanel)
+                {
+                    Logger.Warning($"Flat panel did not report closed and dark (cover {after?.CoverState}, light {after?.LightOn}); asking the user to cover the telescope");
+                }
             }
         }
 
-        // A flip-flat panel shuts out the light by itself; everything else needs the user to cover
-        // the telescope. The run waits for that answer, however long the app stays closed.
-        if (!(panelConnected && flatInfo.SupportsOpenClose))
+        // Everything else needs the user to cover the telescope. The run waits for that answer while
+        // the app is closed, but not forever.
+        if (!coveredByPanel)
         {
             TaskCompletionSource<bool> confirmation;
             lock (gate)
@@ -574,9 +678,19 @@ public static class FlatWizardService
                 currentIndex = filterStates.IndexOf(targets[0]);
             }
 
+            Notification.ShowWarning("Touch 'N' Stars flat run: cover the telescope to start the dark flats");
+
             bool confirmed;
+            var timedOut = false;
             using (token.Register(() => confirmation.TrySetResult(false)))
+            using (var delayCts = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
+                var delay = Task.Delay(CoverConfirmationTimeout, delayCts.Token);
+                if (await Task.WhenAny(confirmation.Task, delay) == delay && !token.IsCancellationRequested)
+                {
+                    timedOut = confirmation.TrySetResult(false);
+                }
+                delayCts.Cancel();
                 confirmed = await confirmation.Task;
             }
 
@@ -585,9 +699,14 @@ public static class FlatWizardService
 
             if (!confirmed)
             {
+                if (timedOut) Logger.Warning("Flat run: nobody confirmed the telescope was covered, dark flats skipped");
                 lock (gate)
                 {
-                    foreach (var t in targets) t.DarkState = "skipped";
+                    foreach (var t in targets)
+                    {
+                        t.DarkState = "skipped";
+                        if (timedOut) t.Error = $"Nobody confirmed the telescope was covered within {CoverConfirmationTimeout.TotalMinutes:0} minutes";
+                    }
                 }
                 return;
             }
@@ -605,16 +724,14 @@ public static class FlatWizardService
                 target.DarkState = "running";
             }
 
-            var filter = target.FilterId.HasValue
-                ? m.Profile.ActiveProfile.FilterWheelSettings.FilterWheelFilters[target.FilterId.Value]
-                : null;
-            var sequence = new CaptureSequence(target.ExposureTime ?? 0, CaptureSequence.ImageTypes.DARK, filter,
+            var sequence = new CaptureSequence(target.ExposureTime ?? 0, CaptureSequence.ImageTypes.DARK, target.Filter,
                 target.Binning ?? new BinningMode(1, 1), target.DarkCount)
             {
                 Gain = target.Gain ?? -1,
                 Offset = target.Offset ?? -1,
             };
 
+            string failure = null;
             try
             {
                 while (sequence.ProgressExposureCount < sequence.TotalExposureCount)
@@ -629,12 +746,9 @@ public static class FlatWizardService
                     await m.ImageSaveMediator.Enqueue(imageData, prepareTask, progress, token);
 
                     sequence.ProgressExposureCount++;
-                    lock (gate) target.DarkCompleted = sequence.ProgressExposureCount;
                 }
-
-                lock (gate) target.DarkState = "success";
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 lock (gate) target.DarkState = "stopped";
                 throw;
@@ -642,14 +756,70 @@ public static class FlatWizardService
             catch (Exception ex)
             {
                 Logger.Error(ex);
-                lock (gate)
+                failure = ex.Message;
+            }
+
+            // DarkCompleted counts frames NINA reports as written, as for the flats.
+            var captured = sequence.ProgressExposureCount;
+            await WaitForSaves(() => target.DarkCompleted + target.DarkSaveFailed >= captured,
+                () => target.DarkSavesStarted <= target.DarkCompleted + target.DarkSaveFailed, token);
+            lock (gate)
+            {
+                if (failure == null && target.DarkCompleted >= target.DarkCount)
+                {
+                    target.DarkState = "success";
+                }
+                else
                 {
                     target.DarkState = "failed";
-                    target.Error = ex.Message;
+                    target.Error = failure ?? SaveSummary(target.DarkCompleted, target.DarkCount, "dark flats", target.DarkSaveError);
                 }
             }
         }
     }
+
+    // 2 s at the 250 ms poll interval.
+    private const int SaveQueueIdlePolls = 8;
+
+    /// <summary>
+    /// NINA writes frames on a background queue and reports each one only once it is on disk (or
+    /// failed). Waits until `allReported` holds, nothing has been in flight for a moment, the run is
+    /// stopped, or the hook grace period is over. Both conditions are evaluated under `gate`.
+    /// </summary>
+    private static async Task WaitForSaves(Func<bool> allReported, Func<bool> nothingInFlight, CancellationToken token)
+    {
+        var deadline = DateTime.UtcNow + HookGracePeriod;
+        var idlePolls = 0;
+        while (true)
+        {
+            lock (gate)
+            {
+                if (allReported()) return;
+                idlePolls = nothingInFlight() ? idlePolls + 1 : 0;
+            }
+            // The save queue picks the next frame up as soon as the previous one is done, so a moment
+            // without a frame in flight means none is left: the missing ones were never queued
+            // because their exposure failed.
+            if (idlePolls >= SaveQueueIdlePolls) return;
+            if (token.IsCancellationRequested) return;
+            if (DateTime.UtcNow >= deadline)
+            {
+                Logger.Warning("Flat run: NINA did not report every frame as saved in time, deciding on the frames reported so far");
+                return;
+            }
+            try
+            {
+                await Task.Delay(250, token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private static string SaveSummary(int saved, int count, string what, string saveError) =>
+        saveError == null ? $"{saved}/{count} {what} saved" : $"{saved}/{count} {what} saved ({saveError})";
 
     // Set before the frame enters NINA's save queue, so it does not depend on the save hook's timing.
     private static void StampDarkTargetName(NINA.Image.ImageData.ImageMetaData metaData)
@@ -677,7 +847,8 @@ public static class FlatWizardService
         }
     }
 
-    private static async Task SwitchLightOffAfterStop()
+    // Has its own timeout instead of the run's token, so it also works after a stop.
+    private static async Task SwitchPanelLightOff()
     {
         var m = TouchNStars.Mediators;
         var info = m.FlatDevice?.GetInfo();
@@ -689,7 +860,7 @@ public static class FlatWizardService
         }
         catch (Exception ex)
         {
-            Logger.Warning($"Could not switch the flat panel light off after stopping the flat run: {ex.Message}");
+            Logger.Warning($"Could not switch the flat panel light off during the flat run: {ex.Message}");
         }
     }
 
@@ -705,22 +876,83 @@ public static class FlatWizardService
         {
             if (hooksAttached) return;
             if (m.Imaging != null) m.Imaging.ImagePrepared += OnImagePrepared;
-            if (m.ImageSaveMediator != null) m.ImageSaveMediator.BeforeImageSaved += OnBeforeImageSaved;
+            if (m.ImageSaveMediator != null)
+            {
+                m.ImageSaveMediator.BeforeImageSaved += OnBeforeImageSaved;
+                m.ImageSaveMediator.ImageSaved += OnImageSaved;
+#if PINS
+                m.ImageSaveMediator.ImageSaveFailed += OnImageSaveFailed;
+#endif
+            }
             hooksAttached = true;
         }
     }
 
-    private static async Task DetachImageHooksLater()
+    private static async Task DetachImageHooksLater(string forRunId)
     {
         await Task.Delay(HookGracePeriod);
         var m = TouchNStars.Mediators;
         lock (gate)
         {
-            // A new run started meanwhile and needs the hooks itself.
-            if (!hooksAttached || running) return;
+            // A newer run started meanwhile and owns the hooks (and their grace period) now.
+            if (!hooksAttached || running || runId != forRunId) return;
             if (m.Imaging != null) m.Imaging.ImagePrepared -= OnImagePrepared;
-            if (m.ImageSaveMediator != null) m.ImageSaveMediator.BeforeImageSaved -= OnBeforeImageSaved;
+            if (m.ImageSaveMediator != null)
+            {
+                m.ImageSaveMediator.BeforeImageSaved -= OnBeforeImageSaved;
+                m.ImageSaveMediator.ImageSaved -= OnImageSaved;
+#if PINS
+                m.ImageSaveMediator.ImageSaveFailed -= OnImageSaveFailed;
+#endif
+            }
             hooksAttached = false;
+        }
+    }
+
+    private static void OnImageSaved(object sender, ImageSavedEventArgs e)
+    {
+        CountSaveResult(e?.MetaData?.Image?.ImageType, null);
+    }
+
+#if PINS
+    private static Task OnImageSaveFailed(object sender, ImageSaveFailedEventArgs e)
+    {
+        var reason = e?.IsDiskFull == true ? "disk full" : e?.Exception?.Message ?? "save failed";
+        CountSaveResult(e?.MetaData?.Image?.ImageType, reason);
+        return Task.CompletedTask;
+    }
+#endif
+
+    // Attributes a written (or failed) frame to the filter the run is on. A filter only hands over to
+    // the next one after all its frames were reported, so a late frame does not land on the wrong one.
+    private static void CountSaveResult(string imageType, string saveError)
+    {
+        var isFlat = string.Equals(imageType, CaptureSequence.ImageTypes.FLAT, StringComparison.OrdinalIgnoreCase);
+        var isDark = string.Equals(imageType, CaptureSequence.ImageTypes.DARK, StringComparison.OrdinalIgnoreCase);
+        if (!isFlat && !isDark) return;
+
+        lock (gate)
+        {
+            if (!running || currentIndex < 0 || currentIndex >= filterStates.Count) return;
+            var s = filterStates[currentIndex];
+            if (phase == "flats" && isFlat)
+            {
+                if (saveError == null) s.Completed++;
+                else
+                {
+                    s.SaveFailed++;
+                    s.SaveError = saveError;
+                }
+            }
+            else if (phase == "darks" && isDark)
+            {
+                if (saveError == null) s.DarkCompleted++;
+                else
+                {
+                    s.DarkSaveFailed++;
+                    s.DarkSaveError = saveError;
+                }
+            }
         }
     }
 
@@ -736,33 +968,36 @@ public static class FlatWizardService
     }
 
     // Flats from standalone sequence items carry no target name, so $$TARGETNAME$$ would resolve to
-    // nothing. Frames that already have a name are never touched. The run's dark flats get the name
-    // its flats were saved with (PINS fills in the active sequence target), so both land together.
+    // nothing. Frames that already have a name are never touched. The name a flat was saved with is
+    // remembered for the run's dark flats, which StampDarkTargetName names before they are queued.
+    // Dark frames are only counted here, not named: while the hook is attached it would also name a
+    // dark library.
     private static Task OnBeforeImageSaved(object sender, BeforeImageSavedEventArgs e)
     {
         try
         {
             var metaData = e?.Image?.MetaData;
-            if (metaData?.Target == null) return Task.CompletedTask;
-
-            var imageType = metaData.Image?.ImageType;
+            var imageType = metaData?.Image?.ImageType;
             var isFlat = string.Equals(imageType, CaptureSequence.ImageTypes.FLAT, StringComparison.OrdinalIgnoreCase);
             var isDark = string.Equals(imageType, CaptureSequence.ImageTypes.DARK, StringComparison.OrdinalIgnoreCase);
             if (!isFlat && !isDark) return Task.CompletedTask;
 
             lock (gate)
             {
-                if (isFlat)
+                // The save queue has started on this frame; ImageSaved or ImageSaveFailed follows.
+                if (running && currentIndex >= 0 && currentIndex < filterStates.Count)
+                {
+                    var s = filterStates[currentIndex];
+                    if (phase == "flats" && isFlat) s.SavesStarted++;
+                    else if (phase == "darks" && isDark) s.DarkSavesStarted++;
+                }
+
+                if (isFlat && metaData.Target != null)
                 {
                     if (string.IsNullOrWhiteSpace(metaData.Target.Name) && !string.IsNullOrEmpty(targetName))
                         metaData.Target.Name = targetName;
                     if (!string.IsNullOrWhiteSpace(metaData.Target.Name))
                         flatTargetName = metaData.Target.Name;
-                }
-                else if (string.IsNullOrWhiteSpace(metaData.Target.Name))
-                {
-                    var name = flatTargetName ?? targetName;
-                    if (!string.IsNullOrEmpty(name)) metaData.Target.Name = name;
                 }
             }
         }
@@ -774,33 +1009,48 @@ public static class FlatWizardService
     }
 
     /// <summary>
-    /// The name arrives from a network client and ends up in a file path, so strip anything that
-    /// cannot appear in a file name and cap the length.
+    /// Reports the run's progress under its own source. Synchronous, unlike Progress&lt;T&gt;, which
+    /// without a SynchronizationContext posts each report to the thread pool where they can overtake
+    /// each other. The empty "done" reports of the sub-steps are dropped; only Clear() removes the entry.
     /// </summary>
-    private static string SanitizeTargetName(string value)
+    private sealed class FlatStatusProgress(IApplicationStatusMediator mediator) : IProgress<ApplicationStatus>
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var sanitized = CoreUtil.ReplaceAllInvalidFilenameChars(value.Trim()).Trim();
-        if (sanitized.Length > MaxTargetNameLength)
+        private readonly object sync = new();
+
+        public void Report(ApplicationStatus status)
         {
-            var cut = MaxTargetNameLength;
-            // Do not cut a surrogate pair in half and leave a lone surrogate in a path.
-            if (char.IsHighSurrogate(sanitized[cut - 1])) cut--;
-            sanitized = sanitized.Substring(0, cut).Trim();
+            if (status == null || string.IsNullOrEmpty(status.Status)) return;
+            lock (sync)
+            {
+                status.Source = StatusSource;
+                mediator?.StatusUpdate(status);
+            }
         }
-        return string.IsNullOrEmpty(sanitized) ? null : sanitized;
+
+        public void Clear()
+        {
+            lock (sync)
+            {
+                mediator?.StatusUpdate(new ApplicationStatus { Source = StatusSource });
+            }
+        }
     }
 
     private class FilterRunState
     {
         public FlatRunFilterConfig Config;
         public int? FilterId;
+        public FilterInfo Filter;
         public string FilterName;
         // pending | running | success | failed | dim | bright | stopped
         public string State;
+        // Frames written to disk; frames NINA failed to write and the last reason; frames the save
+        // queue has started on.
         public int Completed;
+        public int SaveFailed;
+        public string SaveError;
+        public int SavesStarted;
         public int Count;
-        public Func<int> LiveCompleted;
         public double? ExposureTime;
         public double? Brightness;
         public double? LastADU;
@@ -811,6 +1061,9 @@ public static class FlatWizardService
         // none | pending | running | success | failed | skipped | stopped
         public string DarkState;
         public int DarkCompleted;
+        public int DarkSaveFailed;
+        public string DarkSaveError;
+        public int DarkSavesStarted;
         public int DarkCount;
     }
 }

@@ -81,6 +81,9 @@ public static class FlatTargetNameService
             // majority - away from the settings file entirely.
             if (!IsStampableFlat(metaData.Image?.ImageType, metaData.Target.Name)) return Task.CompletedTask;
 
+            // A plugin-side flat run names its frames from its own request.
+            if (FlatWizardService.IsRunning) return Task.CompletedTask;
+
             if (!SettingsController.TryGetRawSetting(SettingsKey, out var raw)) return Task.CompletedTask;
 
             if (TryResolveTargetName(raw, metaData.Image?.ImageType, metaData.Target.Name, out var name))
@@ -120,10 +123,10 @@ public static class FlatTargetNameService
         if (!IsStampableFlat(imageType, existingTargetName)) return false;
 
         var config = ParseConfig(flatsSettingsJson);
-        if (!config.Enabled || string.IsNullOrWhiteSpace(config.Name)) return false;
+        if (!config.Enabled) return false;
 
-        name = Sanitize(config.Name);
-        return !string.IsNullOrEmpty(name);
+        name = SanitizeTargetName(config.Name);
+        return name != null;
     }
 
     /// <summary>
@@ -161,10 +164,12 @@ public static class FlatTargetNameService
     /// The value arrives from a network client and ends up in a file path, so strip
     /// anything that cannot appear in a file name and cap the length. Note that the
     /// invalid character set is OS dependent - this is a guard rail, not a promise
-    /// that any particular character survives.
+    /// that any particular character survives. Returns null when nothing usable is left.
     /// </summary>
-    private static string Sanitize(string value)
+    public static string SanitizeTargetName(string value)
     {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
         // ReplaceAllInvalidFilenameChars already maps both slashes to a hyphen.
         var sanitized = CoreUtil.ReplaceAllInvalidFilenameChars(value.Trim()).Trim();
 
@@ -176,6 +181,6 @@ public static class FlatTargetNameService
             sanitized = sanitized.Substring(0, cut).Trim();
         }
 
-        return sanitized;
+        return string.IsNullOrEmpty(sanitized) ? null : sanitized;
     }
 }
