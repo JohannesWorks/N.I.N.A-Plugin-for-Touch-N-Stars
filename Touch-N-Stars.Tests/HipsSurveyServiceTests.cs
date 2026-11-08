@@ -347,6 +347,20 @@ public class HipsSurveyServiceTests
     }
 
     [Fact]
+    public void NsnsContinuum_StopsAtOrderFiveAndLoadsRgb8()
+    {
+        Assert.Same(SurveyDefinition.NsnsContinuum, SurveyDefinition.Find("nsns-cont"));
+        Assert.Equal("https://www.simg.de/nebulae3/dr0_2/rgb8", SurveyDefinition.NsnsContinuum.DefaultSourceUrls[0]);
+        Assert.Equal(5, SurveyDefinition.NsnsContinuum.MaxOrder);
+        Assert.Equal(6, SurveyDefinition.Nsns.MaxOrder);
+        Assert.Equal("TNS_NSNS_CONT_SURVEY_PATH", SurveyDefinition.NsnsContinuum.PathEnvironmentVariable);
+
+        string properties = HipsSurveyService.BuildPropertiesFile(SurveyDefinition.NsnsContinuum, 5, "https://example.org", DateTime.UtcNow);
+        Assert.Contains("creator_did          = ivo://simg.de/P/NSNS/DR0_2/rgb8\n", properties);
+        Assert.Contains("moc_sky_fraction     = 0.651\n", properties);
+    }
+
+    [Fact]
     public void NsnsStatus_WithoutCoverageMap_UsesExpectedCountsAndIsNotInstalled()
     {
         using TempSurvey survey = new();
