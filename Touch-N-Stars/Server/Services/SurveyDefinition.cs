@@ -87,14 +87,34 @@ public sealed class SurveyDefinition
         "NSNS DR0.2: [SII] (8 bit)",
         new Dictionary<int, long> { [3] = 79_000, [4] = 98_000, [5] = 95_000, [6] = 74_000 });
 
-    private static SurveyDefinition CreateNsns(string id, string product, string title, Dictionary<int, long> averageTileBytes)
+    /// <summary>
+    /// RGB continuum (blue/red continuum, stars partially subtracted). Its HiPS stops at
+    /// order 5 and its Moc.fits differs slightly from the line products at order 6 only, so
+    /// orders 3-5 share their tile counts. Sizes: means of 30 random tiles per order
+    /// converted to JPEG q85, measured on 2026-11-08.
+    /// </summary>
+    public static readonly SurveyDefinition NsnsContinuum = CreateNsns(
+        "nsns-cont",
+        "rgb8",
+        "NSNS DR0.2: RGB continuum",
+        new Dictionary<int, long> { [3] = 69_000, [4] = 75_000, [5] = 64_000 },
+        maxOrder: 5,
+        mocSkyFraction: "0.651");
+
+    private static SurveyDefinition CreateNsns(
+        string id,
+        string product,
+        string title,
+        Dictionary<int, long> averageTileBytes,
+        int maxOrder = 6,
+        string mocSkyFraction = "0.6464")
     {
         return new SurveyDefinition
         {
             Id = id,
             MinOrder = 3,
             BaseOrder = 4,
-            MaxOrder = 6,
+            MaxOrder = maxOrder,
             SourceExtension = ".png",
             ConvertToJpeg = true,
             UsesCoverageMoc = true,
@@ -104,8 +124,8 @@ public sealed class SurveyDefinition
                 $"https://alasky.cds.unistra.fr/simg.de/simg.de_P_NSNS_DR0_2_{product}"
             },
             AverageTileBytes = averageTileBytes,
-            // Tile counts of the DR0.2 coverage (identical for all products), used for
-            // estimates until Moc.fits is on disk.
+            // Tile counts of the DR0.2 coverage (identical for all products up to order 5),
+            // used for estimates until Moc.fits is on disk.
             ExpectedTileCounts = new Dictionary<int, int>
             {
                 [3] = 528,
@@ -121,12 +141,12 @@ public sealed class SurveyDefinition
                 "obs_copyright_url    = http://www.simg.de/nebulae3/dr0_2\n" +
                 "hips_creator         = S. Ziegenbalg\n",
             PropertiesFooter =
-                "moc_sky_fraction     = 0.6464\n" +
+                $"moc_sky_fraction     = {mocSkyFraction}\n" +
                 "bib_reference_url    = https://doi.org/10.3847/2515-5172/adfec7\n"
         };
     }
 
-    public static readonly IReadOnlyList<SurveyDefinition> All = new[] { Dss, Nsns, NsnsHalpha, NsnsOiii, NsnsSii };
+    public static readonly IReadOnlyList<SurveyDefinition> All = new[] { Dss, Nsns, NsnsHalpha, NsnsOiii, NsnsSii, NsnsContinuum };
 
     public string Id { get; init; }
     public string FolderName => Id;
